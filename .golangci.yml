@@ -25,6 +25,7 @@ linters:
     - cyclop            # covered by gocyclo
     - deadcode          # abandoned
     - exhaustivestruct  # replaced by exhaustruct
+    - exhaustruct       # not helpful, prevents idiomatic struct literals
     - funlen            # rely on code review to limit function length
     - gocognit          # dubious "cognitive overhead" quantification
     - gofumpt           # prefer standard gofmt
