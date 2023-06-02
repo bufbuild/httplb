@@ -28,6 +28,59 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// RoundTripperFactory is used to create "leaf" transports in the client. A leaf transport
+// handles requests to a single resolved address.
+type RoundTripperFactory interface {
+	// New creates a new [http.RoundTripper] for requests using the given scheme to the
+	// given host, configured using the given options.
+	New(scheme, target string, options RoundTripperOptions) RoundTripperResult
+}
+
+// RoundTripperResult represents a "leaf" transport created by a RoundTripperFactory.
+type RoundTripperResult struct {
+	// RoundTripper is the actual round-tripper that handles requests.
+	RoundTripper http.RoundTripper
+	// Close is an optional function that will be called (if non-nil) when this
+	// round-tripper is no longer needed.
+	Close func()
+	// PreWarm is an optional function that will be called (if non-nil) to
+	// eagerly establish connections and perform any other checks so that there
+	// are no delays or unexpected errors incurred by the first HTTP request.
+	PreWarm func(ctx context.Context) error
+}
+
+// RoundTripperOptions defines the options used to create a round-tripper.
+type RoundTripperOptions struct {
+	// DialFunc should be used by the round-tripper establish network connections.
+	DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+	// ProxyFunc should be used to control HTTP proxying behavior. If the function
+	// returns a non-nil URL for a given request, that URL represents the HTTP proxy
+	// that should be used.
+	ProxyFunc func(*http.Request) (*url.URL, error)
+	// OnProxyConnectFunc should be called, if non-nil, after a CONNECT request is
+	// sent to an HTTP proxy. If it returns an error, the round-trip operation should
+	// fail immediately with that error.
+	OnProxyConnectFunc func(ctx context.Context, proxyURL *url.URL, connectReq *http.Request, connectRes *http.Response) error
+	// ProxyHeadersFunc should be called, if non-nil, before sending a CONNECT
+	// request, to query for headers to add to that request. If it returns an
+	// error, the round-trip operation should fail immediately with that error.
+	ProxyHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	// MaxResponseHeaderBytes configures the maximum size of the response status
+	// line and response headers.
+	MaxResponseHeaderBytes int64
+	// IdleConnTimeout, if non-zero, is used to expire idle network connections.
+	IdleConnTimeout time.Duration
+	// TLSClientConfig, is present, provides custom TLS configuration for use
+	// with secure ("https") servers.
+	TLSClientConfig *tls.Config
+	// TLSHandshakeTimeout configures the maximum time allowed for a TLS handshake
+	// to complete.
+	TLSHandshakeTimeout time.Duration
+	// KeepWarm indicates that the round-tripper should try to keep a ready
+	// network connection open to reduce any delays in processing a request.
+	KeepWarm bool
+}
+
 // TODO: add this info (whatever's relevant/user-visible) to doc.go
 
 // This package uses a hierarchy with three-layers of transports:
@@ -351,28 +404,6 @@ type connection struct {
 	conn    http.RoundTripper
 	close   func()
 	prewarm func(context.Context) error
-}
-
-type RoundTripperFactory interface {
-	New(scheme, target string, options RoundTripperOptions) RoundTripperResult
-}
-
-type RoundTripperResult struct {
-	RoundTripper http.RoundTripper
-	Close        func()
-	PreWarm      func(ctx context.Context) error
-}
-
-type RoundTripperOptions struct {
-	DialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
-	ProxyFunc              func(*http.Request) (*url.URL, error)
-	OnProxyConnectFunc     func(ctx context.Context, proxyURL *url.URL, connectReq *http.Request, connectRes *http.Response) error
-	ProxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
-	MaxResponseHeaderBytes int64
-	IdleConnTimeout        time.Duration
-	TLSClientConfig        *tls.Config
-	TLSHandshakeTimeout    time.Duration
-	KeepWarm               bool
 }
 
 func roundTripperOptionsFrom(opts *clientOptions) RoundTripperOptions {
