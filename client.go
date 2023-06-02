@@ -75,12 +75,10 @@ func WithRootContext(ctx context.Context) ClientOption {
 // that error.
 func WithProxy(
 	proxyFunc func(*http.Request) (*url.URL, error),
-	onProxyConnectFunc func(ctx context.Context, proxyURL *url.URL, connectReq *http.Request, connectRes *http.Response) error,
 	proxyHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
 ) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		opts.proxyFunc = proxyFunc
-		opts.onProxyConnectFunc = onProxyConnectFunc
 		opts.proxyHeadersFunc = proxyHeadersFunc
 	})
 }
@@ -90,7 +88,6 @@ func WithNoProxy() ClientOption {
 	return WithProxy(
 		// never use a proxy
 		func(*http.Request) (*url.URL, error) { return nil, nil },
-		nil,
 		nil)
 }
 
@@ -273,7 +270,6 @@ type clientOptions struct {
 	rootCtx                context.Context //nolint:containedctx
 	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc              func(*http.Request) (*url.URL, error)
-	onProxyConnectFunc     func(ctx context.Context, proxyURL *url.URL, connectReq *http.Request, connectRes *http.Response) error
 	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
 	redirectFunc           func(req *http.Request, via []*http.Request) error
 	maxResponseHeaderBytes int64
