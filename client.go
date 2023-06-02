@@ -52,6 +52,17 @@ func WithRootContext(ctx context.Context) ClientOption {
 	})
 }
 
+// WithResolver configures the resolver used to resolve hostnames into
+// individual hosts for the underlying connections.
+//
+// If not provided, the default resolver will resolve A and AAAA records
+// using net.DefaultResolver.
+func WithResolver(resolver Resolver) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.resolver = resolver
+	})
+}
+
 // WithProxy configures how the HTTP client interacts with HTTP proxies for
 // reaching remote hosts.
 //
@@ -268,6 +279,7 @@ func (f clientOptionFunc) apply(opts *clientOptions) {
 
 type clientOptions struct {
 	rootCtx                context.Context //nolint:containedctx
+	resolver               Resolver
 	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc              func(*http.Request) (*url.URL, error)
 	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
@@ -285,6 +297,13 @@ type clientOptions struct {
 func (opts *clientOptions) applyDefaults() {
 	if opts.rootCtx == nil {
 		opts.rootCtx = context.Background()
+	}
+	if opts.resolver == nil {
+		// TODO: need to determine best way to deal with dual stack.
+		// See also:
+		// - https://www.rfc-editor.org/rfc/rfc6724
+		// - https://github.com/CAFxX/balancer/blob/master/roundtripper.go#L27
+		opts.resolver = NewNetResolver("ip", net.DefaultResolver)
 	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext

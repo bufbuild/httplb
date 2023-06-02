@@ -100,6 +100,7 @@ type RoundTripperOptions struct {
 
 type mainTransport struct {
 	rootCtx              context.Context //nolint:containedctx
+	resolver             Resolver
 	idleTransportTimeout time.Duration
 	warmTargets          map[target]struct{}
 	roundTripperOpts     RoundTripperOptions
@@ -139,6 +140,7 @@ func newTransport(opts *clientOptions) *mainTransport {
 	// TODO: custom round trippers, resolvers, balancers, etc
 	return &mainTransport{
 		rootCtx:              opts.rootCtx,
+		resolver:             opts.resolver,
 		roundTripperOpts:     roundTripperOptionsFrom(opts),
 		idleTransportTimeout: opts.idleTransportTimeout,
 		warmTargets:          warmSet,
@@ -171,7 +173,7 @@ func (m *mainTransport) getOrCreatePool(dest target) *transportPool {
 
 	opts := m.roundTripperOpts
 	_, opts.KeepWarm = m.warmTargets[dest]
-	pool = newTransportPool(m.rootCtx, dest.scheme, dest.hostPort, simpleFactory{}, opts)
+	pool = newTransportPool(m.rootCtx, dest.scheme, dest.hostPort, simpleFactory{}, opts, m.resolver)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
@@ -269,6 +271,7 @@ type transportPool struct {
 	roundTripperFactory RoundTripperFactory
 	roundTripperOptions RoundTripperOptions
 	resolved            <-chan struct{}
+	resolver            Resolver
 
 	mu sync.RWMutex
 	// TODO: we may need better data structures than this to
@@ -278,31 +281,51 @@ type transportPool struct {
 	closed bool
 }
 
-func newTransportPool(_ context.Context, scheme, hostPort string, factory RoundTripperFactory, opts RoundTripperOptions) *transportPool {
-	resolved := make(chan struct{})
+func newTransportPool(ctx context.Context, scheme, hostPort string, factory RoundTripperFactory, opts RoundTripperOptions, resolver Resolver) *transportPool {
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second /* TODO */)
 
 	pool := &transportPool{
 		scheme:              scheme,
 		roundTripperFactory: factory,
 		roundTripperOptions: opts,
-		resolved:            resolved,
+		resolved:            resolveCtx.Done(),
+		resolver:            resolver,
 		pool:                map[string][]connection{},
 	}
 
 	go func() {
 		// TODO: customizable resolution (and better DNS resolution than default),
 		//       custom subsetting, etc.
-		defer close(resolved)
-		result := factory.New(scheme, hostPort, opts)
-		conn := connection{
-			addr:    hostPort,
-			conn:    result.RoundTripper,
-			close:   result.Close,
-			prewarm: result.PreWarm,
+		defer resolveCancel()
+		backends, err := resolver.Resolve(resolveCtx, hostPort)
+		if err != nil {
+			// TODO: need to figure out how to handle this...
+			pool.mu.Lock()
+			pool.pool = map[string][]connection{}
+			pool.conns = []connection{}
+			pool.mu.Unlock()
+			return
+		}
+		// TODO:
+		// - not sure what to do about scheduling periodic resolution requests
+		//   (should there be a separate scheduler interface?)
+		// - need to implement diffing for resolution after initial resolve
+		newPool := map[string][]connection{}
+		newConns := []connection{}
+		for _, backend := range backends {
+			result := factory.New(scheme, backend.HostPort(), opts)
+			conn := connection{
+				backend: backend,
+				conn:    result.RoundTripper,
+				close:   result.Close,
+				prewarm: result.PreWarm,
+			}
+			newPool[backend.HostPort()] = []connection{conn}
+			newConns = append(newConns, conn)
 		}
 		pool.mu.Lock()
-		pool.conns = []connection{conn}
-		pool.pool[hostPort] = []connection{conn}
+		pool.pool = newPool
+		pool.conns = newConns
 		pool.mu.Unlock()
 	}()
 
@@ -342,7 +365,14 @@ func (t *transportPool) getRoundTripper() http.RoundTripper {
 
 func (t *transportPool) pick(conns []connection) http.RoundTripper {
 	// TODO: customizable picker
-	return conns[0].conn
+	t.mu.RLock()
+	conn := conns[0]
+	t.mu.RUnlock()
+
+	return addressRewritingRoundTripper{
+		hostPort:     conn.backend.HostPort(),
+		roundTripper: conn.conn,
+	}
 }
 
 func (t *transportPool) prewarm(ctx context.Context) error {
@@ -396,7 +426,7 @@ func (t *transportPool) close() {
 }
 
 type connection struct {
-	addr    string
+	backend Backend
 	conn    http.RoundTripper
 	close   func()
 	prewarm func(context.Context) error
@@ -433,6 +463,20 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 	// no way to populate pre-warm function since http.Transport doesn't provide
 	// any way to do that :(
 	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
+}
+
+type addressRewritingRoundTripper struct {
+	hostPort     string
+	roundTripper http.RoundTripper
+}
+
+func (a addressRewritingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	if req.Host == "" {
+		req.Host = req.URL.Host
+	}
+	req.URL.Host = a.hostPort
+	return a.roundTripper.RoundTrip(req)
 }
 
 type noAddressRoundTripper struct{}
