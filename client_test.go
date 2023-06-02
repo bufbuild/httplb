@@ -46,7 +46,7 @@ func TestNewClient(t *testing.T) {
 		require.Equal(t, http.ErrServerClosed, err)
 	}()
 	defer func() {
-		shutdownCtx, shutdownCancel := context.WithCancel(ctx)
+		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer shutdownCancel()
 		err := svr.Shutdown(shutdownCtx)
 		require.NoError(t, err)
