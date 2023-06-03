@@ -31,11 +31,22 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
+	errNoRedirects = errors.New("not following redirects")
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
 type ClientOption interface {
-	apply(*clientOptions)
+	applyToClient(*clientOptions)
+}
+
+// TargetOption is an option used to customize the behavior of an HTTP client
+// that can be applied to a single target or backend.
+//
+// A TargetOption can be used as a ClientOption, in which case it applies as
+// a default for all targets.
+type TargetOption interface {
+	applyToClient(*clientOptions)
+	applyToTarget(*targetOptions)
 }
 
 // WithRootContext configures the root context used for any background
@@ -76,15 +87,15 @@ func WithRootContext(ctx context.Context) ClientOption {
 func WithProxy(
 	proxyFunc func(*http.Request) (*url.URL, error),
 	proxyHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
-) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.proxyFunc = proxyFunc
 		opts.proxyHeadersFunc = proxyHeadersFunc
 	})
 }
 
 // WithNoProxy returns an option that disables use of HTTP proxies.
-func WithNoProxy() ClientOption {
+func WithNoProxy() TargetOption {
 	return WithProxy(
 		// never use a proxy
 		func(*http.Request) (*url.URL, error) { return nil, nil },
@@ -93,8 +104,8 @@ func WithNoProxy() ClientOption {
 
 // WithRedirects configures how the HTTP client handles redirect responses.
 // If no such option is provided, the client will not follow any redirects.
-func WithRedirects(redirectFunc RedirectFunc) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithRedirects(redirectFunc RedirectFunc) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.redirectFunc = redirectFunc
 	})
 }
@@ -126,8 +137,8 @@ func FollowRedirects(limit int) RedirectFunc {
 // already has a deadline, then no timeout is applied. Otherwise, the
 // given timeout is used and applies to the entire duration of the request,
 // from sending the first request byte to receiving the last response byte.
-func WithDefaultTimeout(duration time.Duration) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithDefaultTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.defaultTimeout = duration
 		opts.requestTimeout = 0
 	})
@@ -137,8 +148,8 @@ func WithDefaultTimeout(duration time.Duration) ClientOption {
 // is the entire duration of the request, including sending the request,
 // writing the request body, waiting for a response, and consuming the
 // response body.
-func WithRequestTimeout(duration time.Duration) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithRequestTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.defaultTimeout = 0
 		opts.requestTimeout = duration
 	})
@@ -148,8 +159,8 @@ func WithRequestTimeout(duration time.Duration) ClientOption {
 // establish network connections. If no WithDialer option is provided,
 // a default [net.Dialer] is used that uses a 30-second dial timeout and
 // configures the connection to use TCP keep-alive every 30 seconds.
-func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.dialFunc = dialFunc
 	})
 }
@@ -159,8 +170,8 @@ func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Co
 // given timeout is applied to the TLS handshake step. If the given timeout
 // is zero or no WithTLSConfig option is used, a default timeout of 10
 // seconds will be used.
-func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.tlsClientConfig = config
 		opts.tlsHandshakeTimeout = handshakeTimeout
 	})
@@ -169,8 +180,8 @@ func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) ClientOpt
 // WithMaxResponseHeaderBytes configures the maximum size of response headers
 // to consume. If zero or if no WithMaxResponseHeaderBytes option is used, the
 // HTTP client will default to a 1 MB limit (2^20 bytes).
-func WithMaxResponseHeaderBytes(limit int) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithMaxResponseHeaderBytes(limit int) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.maxResponseHeaderBytes = int64(limit)
 	})
 }
@@ -183,8 +194,8 @@ func WithMaxResponseHeaderBytes(limit int) ClientOption {
 // than that time limit, to prevent the client from trying to use a
 // connection could be concurrently closed by a server for being idle
 // for too long.
-func WithIdleConnectionTimeout(duration time.Duration) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
+func WithIdleConnectionTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
 		opts.idleConnTimeout = duration
 	})
 }
@@ -211,18 +222,31 @@ func WithIdleTransportTimeout(duration time.Duration) ClientOption {
 	})
 }
 
-// WithKeepWarmTargets prevents the given targets from being closed even
-// if idle. Transports for these targets are immortal, to make sure there is
-// always a "warm" transport available for sending a request.
+// WithBackendTarget configures the given target (identified by URL scheme
+// and host:port) with the given options. Targets configured this way will be
+// kept warm, meaning that associated transports will not be closed due to
+// inactivity, regardless of the idle transport timeout configuration. Further,
+// hosts configured this way can be "warmed up" via the Prewarm function, to
+// make sure they are ready for application use.
 //
-// Each target must be in "scheme://host:port" format. If the scheme is
-// omitted, "http" is assumed. The "host:port" portion should exactly match
-// HTTP requests used with the client. So if those requests omit the port
-// then so should the target used with this function.
-func WithKeepWarmTargets(targets ...string) ClientOption {
-	// TODO: validate targets here? if invalid, return error? panic?
+// The scheme and host:port given must match those of associated requests. So
+// if requests omit the port from the URL (for example), then the hostPort
+// given here should also omit the port.
+func WithBackendTarget(scheme, hostPort string, targetOpts ...TargetOption) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
-		opts.warmTargets = append(opts.warmTargets, targets...)
+		dest := target{scheme: scheme, hostPort: hostPort}
+		if dest.scheme == "" {
+			dest.scheme = "http"
+		}
+		opts.targetOptions[dest] = append(opts.targetOptions[dest], targetOpts...)
+	})
+}
+
+// WithDisallowUnconfiguredTargets configures the client to disallow HTTP
+// requests to targets that were not configured via WithBackendTarget options.
+func WithDisallowUnconfiguredTargets() ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.disallowOthers = true
 	})
 }
 
@@ -230,12 +254,13 @@ func WithKeepWarmTargets(targets ...string) ClientOption {
 func NewClient(options ...ClientOption) *http.Client {
 	var opts clientOptions
 	for _, opt := range options {
-		opt.apply(&opts)
+		opt.applyToClient(&opts)
 	}
 	opts.applyDefaults()
+	opts.computeTargetOptions()
 	return &http.Client{
 		Transport:     newTransport(&opts),
-		CheckRedirect: opts.redirectFunc,
+		CheckRedirect: opts.redirect,
 	}
 }
 
@@ -254,7 +279,7 @@ func Close(client *http.Client) error {
 }
 
 // Prewarm pre-warms the given HTTP client, making sure that any targets
-// configured via WithKeepWarmTargets have been warmed up. This ensures that
+// configured via WithBackendTarget have been warmed up. This ensures that
 // relevant addresses are resolved, any health checks performed, connections
 // possibly already established, etc.
 //
@@ -276,43 +301,123 @@ func Prewarm(ctx context.Context, client *http.Client) error {
 
 type clientOptionFunc func(*clientOptions)
 
-func (f clientOptionFunc) apply(opts *clientOptions) {
+func (f clientOptionFunc) applyToClient(opts *clientOptions) {
 	f(opts)
 }
 
 type clientOptions struct {
-	rootCtx                context.Context //nolint:containedctx
-	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
-	proxyFunc              func(*http.Request) (*url.URL, error)
-	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
-	redirectFunc           func(req *http.Request, via []*http.Request) error
-	maxResponseHeaderBytes int64
-	idleConnTimeout        time.Duration
-	idleTransportTimeout   time.Duration
-	warmTargets            []string
-	tlsClientConfig        *tls.Config
-	tlsHandshakeTimeout    time.Duration
-	defaultTimeout         time.Duration
-	requestTimeout         time.Duration
+	rootCtx              context.Context //nolint:containedctx
+	idleTransportTimeout time.Duration
+	// if true, only targets configured below are allowed; requests to others will fail
+	disallowOthers bool
+
+	// target options are accumulated in these
+	defaultTargetOptions []TargetOption
+	targetOptions        map[target][]TargetOption
+
+	// the above options are then applied to these computed results
+	computedDefaultTargetOptions targetOptions
+	computedTargetOptions        map[target]*targetOptions
 }
 
 func (opts *clientOptions) applyDefaults() {
 	if opts.rootCtx == nil {
 		opts.rootCtx = context.Background()
 	}
+	if opts.idleTransportTimeout == 0 {
+		opts.idleTransportTimeout = 15 * time.Minute
+	}
+}
+
+func (opts *clientOptions) computeTargetOptions() {
+	// compute the defaults
+	for _, opt := range opts.defaultTargetOptions {
+		opt.applyToTarget(&opts.computedDefaultTargetOptions)
+	}
+	opts.computedDefaultTargetOptions.applyDefaults()
+
+	// and compute for each configured target
+	opts.computedTargetOptions = make(map[target]*targetOptions, len(opts.targetOptions))
+	for target, targetOptionSlice := range opts.targetOptions {
+		var targetOpts targetOptions
+		// apply defaults first
+		for _, opt := range opts.defaultTargetOptions {
+			opt.applyToTarget(&targetOpts)
+		}
+		// then others, to override defaults
+		for _, opt := range targetOptionSlice {
+			opt.applyToTarget(&targetOpts)
+		}
+		// finally, fill in defaults for unset values
+		targetOpts.applyDefaults()
+
+		opts.computedTargetOptions[target] = &targetOpts
+	}
+}
+
+func (opts *clientOptions) redirect(req *http.Request, via []*http.Request) error {
+	// use original request target to determine redirect rules
+	dest := targetFromURL(via[0].URL)
+	targetOpts := opts.optionsForTarget(dest)
+	if targetOpts == nil {
+		return nil
+	}
+	return targetOpts.redirectFunc(req, via)
+}
+
+// optionsForTarget returns the options to use for requests to the given
+// target. If the given target was not configured, this will return the
+// default options, or it will return nil if WithDisallowUnconfiguredTargets
+// was used.
+func (opts *clientOptions) optionsForTarget(dest target) *targetOptions {
+	if targetOpts := opts.computedTargetOptions[dest]; targetOpts != nil {
+		return targetOpts
+	}
+	if opts.disallowOthers {
+		return nil
+	}
+	return &opts.computedDefaultTargetOptions
+}
+
+type targetOptionFunc func(*targetOptions)
+
+func (f targetOptionFunc) applyToClient(opts *clientOptions) {
+	opts.defaultTargetOptions = append(opts.defaultTargetOptions, f)
+}
+
+func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
+	f(opts)
+}
+
+type targetOptions struct {
+	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
+	proxyFunc              func(*http.Request) (*url.URL, error)
+	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	redirectFunc           func(req *http.Request, via []*http.Request) error
+	maxResponseHeaderBytes int64
+	idleConnTimeout        time.Duration
+	tlsClientConfig        *tls.Config
+	tlsHandshakeTimeout    time.Duration
+	defaultTimeout         time.Duration
+	requestTimeout         time.Duration
+}
+
+func (opts *targetOptions) applyDefaults() {
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext
 	}
 	if opts.proxyFunc == nil {
 		opts.proxyFunc = http.ProxyFromEnvironment
 	}
+	if opts.redirectFunc == nil {
+		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
+			return errNoRedirects
+		}
+	}
 	if opts.maxResponseHeaderBytes == 0 {
 		opts.maxResponseHeaderBytes = 1 << 20
 	}
 	if opts.tlsHandshakeTimeout == 0 {
 		opts.tlsHandshakeTimeout = 10 * time.Second
-	}
-	if opts.idleTransportTimeout == 0 {
-		opts.idleTransportTimeout = 15 * time.Minute
 	}
 }

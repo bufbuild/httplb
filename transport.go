@@ -19,10 +19,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -107,9 +110,7 @@ type mainTransport struct {
 	rootCtx              context.Context //nolint:containedctx
 	cancel               context.CancelFunc
 	idleTransportTimeout time.Duration
-	warmTargets          map[target]struct{}
-	roundTripperOpts     RoundTripperOptions
-	applyRequestTimeout  func(ctx context.Context) (context.Context, context.CancelFunc)
+	clientOptions        *clientOptions
 
 	mu     sync.RWMutex
 	pools  map[target]transportPoolEntry
@@ -117,41 +118,13 @@ type mainTransport struct {
 }
 
 func newTransport(opts *clientOptions) *mainTransport {
-	var applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	if opts.requestTimeout > 0 {
-		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			return context.WithTimeout(ctx, opts.requestTimeout)
-		}
-	} else if opts.defaultTimeout > 0 {
-		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			_, ok := ctx.Deadline()
-			if !ok {
-				// no existing deadline, so set one
-				return context.WithTimeout(ctx, opts.defaultTimeout)
-			}
-			return ctx, func() {}
-		}
-	}
-	var warmSet map[target]struct{}
-	if len(opts.warmTargets) > 0 {
-		warmSet = make(map[target]struct{}, len(opts.warmTargets))
-		for _, warmTarget := range opts.warmTargets {
-			targetURL, err := url.Parse(warmTarget)
-			if err != nil {
-				targetURL = &url.URL{Host: warmTarget}
-			}
-			warmSet[target{scheme: targetURL.Scheme, hostPort: targetURL.Host}] = struct{}{}
-		}
-	}
 	ctx, cancel := context.WithCancel(opts.rootCtx)
 	// TODO: custom round trippers, resolvers, balancers, etc
 	transport := &mainTransport{
 		rootCtx:              ctx,
 		cancel:               cancel,
-		roundTripperOpts:     roundTripperOptionsFrom(opts),
+		clientOptions:        opts,
 		idleTransportTimeout: opts.idleTransportTimeout,
-		warmTargets:          warmSet,
-		applyRequestTimeout:  applyTimeout,
 		pools:                map[target]transportPoolEntry{},
 	}
 	go func() {
@@ -197,10 +170,10 @@ func (m *mainTransport) closeKeepWarmPools() {
 }
 
 func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	dest := target{scheme: request.URL.Scheme, hostPort: request.URL.Host}
-	pool := m.getOrCreatePool(dest)
-	if pool == nil {
-		return nil, errTransportIsClosed
+	dest := targetFromURL(request.URL)
+	pool, err := m.getOrCreatePool(dest)
+	if err != nil {
+		return nil, err
 	}
 	return pool.RoundTrip(request)
 }
@@ -208,40 +181,62 @@ func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error)
 // getOrCreatePool gets the transport pool for the given dest, creating one if
 // none exists. However, this refuses to create a pool, and will return nil, if
 // the transport is closed.
-func (m *mainTransport) getOrCreatePool(dest target) *transportPool {
+func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	m.mu.RLock()
 	closed := m.closed
 	pool := m.getPoolLocked(dest)
 	m.mu.RUnlock()
 
 	if closed {
-		return nil
+		return nil, errTransportIsClosed
 	}
 	if pool != nil {
-		return pool
+		return pool, nil
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// double-check in case things changed while upgrading lock
 	if m.closed {
-		return nil
+		return nil, errTransportIsClosed
 	}
 	pool = m.getPoolLocked(dest)
 	if pool != nil {
-		return pool
+		return pool, nil
 	}
 
-	opts := m.roundTripperOpts
-	_, opts.KeepWarm = m.warmTargets[dest]
-	pool = newTransportPool(m.rootCtx, dest.scheme, dest.hostPort, simpleFactory{}, opts)
+	targetOpts := m.clientOptions.optionsForTarget(dest)
+	if targetOpts == nil {
+		return nil, fmt.Errorf("client does not allow requests to unconfigured target %s", dest)
+	}
+	var applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
+	if targetOpts.requestTimeout > 0 {
+		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(ctx, targetOpts.requestTimeout)
+		}
+	} else if targetOpts.defaultTimeout > 0 {
+		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			_, ok := ctx.Deadline()
+			if !ok {
+				// no existing deadline, so set one
+				return context.WithTimeout(ctx, targetOpts.defaultTimeout)
+			}
+			return ctx, func() {}
+		}
+	}
+
+	opts := roundTripperOptionsFrom(targetOpts)
+	// explicitly configured targets are kept warm
+	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
+
+	pool = newTransportPool(m.rootCtx, dest, applyTimeout, simpleFactory{}, opts)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
 		go m.closeWhenIdle(m.rootCtx, dest, pool, activity)
 	}
 	m.pools[dest] = transportPoolEntry{pool: pool, activity: activity}
-	return pool
+	return pool, nil
 }
 
 func (m *mainTransport) getPoolLocked(dest target) *transportPool {
@@ -305,13 +300,13 @@ func (m *mainTransport) removePool(dest target) {
 }
 
 func (m *mainTransport) prewarm(ctx context.Context) error {
-	if len(m.warmTargets) == 0 {
+	if len(m.clientOptions.computedTargetOptions) == 0 {
 		return nil
 	}
 	grp, grpcCtx := errgroup.WithContext(ctx)
-	for dest := range m.warmTargets {
-		pool := m.getOrCreatePool(dest)
-		if pool != nil {
+	for dest := range m.clientOptions.computedTargetOptions {
+		pool, err := m.getOrCreatePool(dest)
+		if err == nil {
 			grp.Go(func() error {
 				return pool.prewarm(grpcCtx)
 			})
@@ -325,13 +320,26 @@ type target struct {
 	hostPort string
 }
 
+func targetFromURL(dest *url.URL) target {
+	t := target{scheme: dest.Scheme, hostPort: dest.Host}
+	if t.scheme == "" {
+		t.scheme = "http"
+	}
+	return t
+}
+
+func (t target) String() string {
+	return t.scheme + "://" + t.hostPort
+}
+
 type transportPoolEntry struct {
 	pool     *transportPool
 	activity chan<- struct{}
 }
 
 type transportPool struct {
-	scheme              string
+	dest                target
+	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
 	roundTripperFactory RoundTripperFactory
 	roundTripperOptions RoundTripperOptions
 	resolved            <-chan struct{}
@@ -339,36 +347,44 @@ type transportPool struct {
 	mu sync.RWMutex
 	// TODO: we may need better data structures than this to
 	//       support "picker" interface and efficient selection
-	pool   map[string][]connection
-	conns  []connection
+	pool   map[string][]*connection
+	conns  []*connection
 	closed bool
 }
 
-func newTransportPool(_ context.Context, scheme, hostPort string, factory RoundTripperFactory, opts RoundTripperOptions) *transportPool {
+func newTransportPool(
+	_ context.Context,
+	dest target,
+	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
+	factory RoundTripperFactory,
+	opts RoundTripperOptions,
+) *transportPool {
 	resolved := make(chan struct{})
 
 	pool := &transportPool{
-		scheme:              scheme,
+		dest:                dest,
+		applyRequestTimeout: applyTimeout,
 		roundTripperFactory: factory,
 		roundTripperOptions: opts,
 		resolved:            resolved,
-		pool:                map[string][]connection{},
+		pool:                map[string][]*connection{},
 	}
 
 	go func() {
 		// TODO: customizable resolution (and better DNS resolution than default),
 		//       custom subsetting, etc.
 		defer close(resolved)
-		result := factory.New(scheme, hostPort, opts)
-		conn := connection{
-			addr:    hostPort,
+		addr := dest.hostPort
+		result := factory.New(dest.scheme, addr, opts)
+		conn := &connection{
+			addr:    addr,
 			conn:    result.RoundTripper,
 			close:   result.Close,
 			prewarm: result.PreWarm,
 		}
 		pool.mu.Lock()
-		pool.conns = []connection{conn}
-		pool.pool[hostPort] = []connection{conn}
+		pool.conns = []*connection{conn}
+		pool.pool[addr] = []*connection{conn}
 		pool.mu.Unlock()
 	}()
 
@@ -376,14 +392,33 @@ func newTransportPool(_ context.Context, scheme, hostPort string, factory RoundT
 }
 
 func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error) {
-	rt := t.getRoundTripper()
-	if rt == nil {
-		return nil, errTransportIsClosed
+	conn, err := t.getConnection()
+	if err != nil {
+		return nil, err
 	}
-	return rt.RoundTrip(request)
+	var cancel context.CancelFunc
+	if t.applyRequestTimeout != nil {
+		var ctx context.Context
+		ctx, cancel = t.applyRequestTimeout(request.Context())
+		request = request.WithContext(ctx)
+	}
+	conn.activeRequests.Add(1)
+	resp, err := conn.conn.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = whenComplete(resp.Body, func() {
+		// TODO: may need to use WaitGroup or similar so we can await
+		//       completion of active requests
+		if cancel != nil {
+			cancel()
+		}
+		conn.activeRequests.Add(-1)
+	})
+	return resp, nil
 }
 
-func (t *transportPool) getRoundTripper() http.RoundTripper {
+func (t *transportPool) getConnection() (*connection, error) {
 	t.mu.RLock()
 	conns, closed := t.conns, t.closed
 	t.mu.RUnlock()
@@ -398,19 +433,17 @@ func (t *transportPool) getRoundTripper() http.RoundTripper {
 	}
 
 	if closed {
-		return nil
+		return nil, errTransportIsClosed
 	}
 	if len(conns) == 0 {
-		return failedToResolveRoundTripper{
-			err: errResolverReturnedNoAddresses,
-		}
+		return nil, fmt.Errorf("failed to resolve hostname %q: %w", t.dest.hostPort, errResolverReturnedNoAddresses)
 	}
-	return t.pick(conns)
+	return t.pick(conns), nil
 }
 
-func (t *transportPool) pick(conns []connection) http.RoundTripper {
+func (t *transportPool) pick(conns []*connection) *connection {
 	// TODO: customizable picker
-	return conns[0].conn
+	return conns[0]
 }
 
 func (t *transportPool) prewarm(ctx context.Context) error {
@@ -466,9 +499,11 @@ type connection struct {
 	conn    http.RoundTripper
 	close   func()
 	prewarm func(context.Context) error
+
+	activeRequests atomic.Int32
 }
 
-func roundTripperOptionsFrom(opts *clientOptions) RoundTripperOptions {
+func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
 	return RoundTripperOptions{
 		DialFunc:               opts.dialFunc,
 		ProxyFunc:              opts.proxyFunc,
@@ -501,10 +536,33 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
 }
 
-type failedToResolveRoundTripper struct {
-	err error
+func whenComplete(body io.ReadCloser, callback func()) io.ReadCloser {
+	// TODO: also monitor request context for cancellation/timeout
+	reader := &hookReadCloser{ReadCloser: body, hook: callback}
+	runtime.SetFinalizer(reader, (*hookReadCloser).done)
+	return reader
 }
 
-func (rt failedToResolveRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	return nil, fmt.Errorf("failed to resolve hostname %q: %w", req.URL.Host, rt.err)
+type hookReadCloser struct {
+	io.ReadCloser
+	onClose sync.Once
+	hook    func()
+}
+
+func (h *hookReadCloser) done() {
+	h.onClose.Do(h.hook)
+}
+
+func (h *hookReadCloser) Read(p []byte) (n int, err error) {
+	n, err = h.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		h.done()
+	}
+	return n, err
+}
+
+func (h *hookReadCloser) Close() error {
+	err := h.ReadCloser.Close()
+	h.done()
+	return err
 }
