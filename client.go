@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package httpbalancer
+package httplb
 
 import (
 	"context"
@@ -237,6 +237,20 @@ func NewClient(options ...ClientOption) *http.Client {
 		Transport:     newTransport(&opts),
 		CheckRedirect: opts.redirectFunc,
 	}
+}
+
+// Close closes the given HTTP client, releasing any resources and stopping
+// any associated background goroutines.
+//
+// If the given client was not created using NewClient, this will return an
+// error.
+func Close(client *http.Client) error {
+	transport, ok := client.Transport.(*mainTransport)
+	if !ok {
+		return errors.New("client not created by this package")
+	}
+	transport.close()
+	return nil
 }
 
 // Prewarm pre-warms the given HTTP client, making sure that any targets
