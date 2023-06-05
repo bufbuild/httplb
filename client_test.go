@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // TODO: make real tests... this is just a simple "smoke test" that the current
@@ -36,9 +38,9 @@ func TestNewClient(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	svr := http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Handler: h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(([]byte)("got it"))
-		}),
+		}), &http2.Server{}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -52,9 +54,13 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	client := NewClient(WithDebugResourceLeaks(func(*http.Request, *http.Response) {
-		require.Fail(t, "response from %v was finalized but never consumed/closed")
-	}))
+	client := NewClient(
+		WithDebugResourceLeaks(func(*http.Request, *http.Response) {
+			require.Fail(t, "response from %v was finalized but never consumed/closed")
+		}),
+		WithBackendTarget("http", listener.Addr().String()),
+		WithBackendTarget("h2c", listener.Addr().String()),
+	)
 	t.Cleanup(func() {
 		err := Close(client)
 		require.NoError(t, err)
@@ -72,6 +78,20 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "got it", string(body))
+
+	// do it again, using h2c
+	url = fmt.Sprintf("h2c://%s/foo", listener.Addr().String())
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	require.NoError(t, err)
+	resp, err = client.Do(req)
+	require.NoError(t, err)
+	defer func() {
+		err := resp.Body.Close()
+		require.NoError(t, err)
+	}()
+	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "got it", string(body))
 }
