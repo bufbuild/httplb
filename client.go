@@ -431,7 +431,7 @@ func (opts *targetOptions) applyDefaults() {
 	}
 	if opts.redirectFunc == nil {
 		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
-			return errNoRedirects
+			return http.ErrUseLastResponse
 		}
 	}
 	if opts.maxResponseHeaderBytes == 0 {
