@@ -250,6 +250,19 @@ func WithDisallowUnconfiguredTargets() ClientOption {
 	})
 }
 
+// WithDebugResourceLeaks configures the client so that it panics if it detects
+// a resource leak in a client operation. A resource leak is where the calling
+// code fails to exhaust or close the body of an HTTP response. If your program
+// has such a resource leak, some features of load balancing may not work as
+// expected (for example, a "least loaded" algorithm will see these HTTP
+// responses as forever in progress). Also, attempts to Close a client may
+// hang indefinitely, waiting on these orphaned operations to complete.
+func WithDebugResourceLeaks() ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.debugResourceLeaks = true
+	})
+}
+
 // NewClient returns a new HTTP client that uses the given options.
 func NewClient(options ...ClientOption) *http.Client {
 	var opts clientOptions
@@ -318,6 +331,8 @@ type clientOptions struct {
 	// the above options are then applied to these computed results
 	computedDefaultTargetOptions targetOptions
 	computedTargetOptions        map[target]*targetOptions
+
+	debugResourceLeaks bool
 }
 
 func (opts *clientOptions) applyDefaults() {

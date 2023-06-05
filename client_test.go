@@ -52,7 +52,7 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	client := NewClient()
+	client := NewClient(WithDebugResourceLeaks())
 	t.Cleanup(func() {
 		err := Close(client)
 		require.NoError(t, err)

@@ -229,7 +229,7 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	// explicitly configured targets are kept warm
 	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
 
-	pool = newTransportPool(m.rootCtx, dest, applyTimeout, simpleFactory{}, opts)
+	pool = newTransportPool(m.rootCtx, dest, applyTimeout, simpleFactory{}, opts, m.clientOptions.debugResourceLeaks)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
@@ -343,6 +343,7 @@ type transportPool struct {
 	roundTripperFactory RoundTripperFactory
 	roundTripperOptions RoundTripperOptions
 	resolved            <-chan struct{}
+	debugResourceLeaks  bool
 
 	mu sync.RWMutex
 	// TODO: we may need better data structures than this to
@@ -358,6 +359,7 @@ func newTransportPool(
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	factory RoundTripperFactory,
 	opts RoundTripperOptions,
+	debugResourceLeaks bool,
 ) *transportPool {
 	resolved := make(chan struct{})
 
@@ -368,6 +370,7 @@ func newTransportPool(
 		roundTripperOptions: opts,
 		resolved:            resolved,
 		pool:                map[string][]*connection{},
+		debugResourceLeaks:  debugResourceLeaks,
 	}
 
 	go func() {
@@ -407,14 +410,14 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
-	resp.Body = whenComplete(resp.Body, func() {
+	resp.Body = whenComplete(request.URL, resp.Body, func() {
 		// TODO: may need to use WaitGroup or similar so we can await
 		//       completion of active requests
 		if cancel != nil {
 			cancel()
 		}
 		conn.activeRequests.Add(-1)
-	})
+	}, t.debugResourceLeaks)
 	return resp, nil
 }
 
@@ -536,21 +539,41 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
 }
 
-func whenComplete(body io.ReadCloser, callback func()) io.ReadCloser {
-	// TODO: also monitor request context for cancellation/timeout
-	reader := &hookReadCloser{ReadCloser: body, hook: callback}
-	runtime.SetFinalizer(reader, (*hookReadCloser).done)
-	return reader
+func whenComplete(reqURL *url.URL, body io.ReadCloser, callback func(), debugResourceLeaks bool) io.ReadCloser {
+	newBody := io.ReadCloser(&hookReadCloser{ReadCloser: body, hook: callback})
+	if debugResourceLeaks {
+		runtime.SetFinalizer(newBody, func(closer *hookReadCloser) {
+			if !closer.closed.Load() {
+				panic(fmt.Sprintf("response body for request %v was leaked: body not consumed/closed, but finalized", reqURL))
+			}
+		})
+		// Return a wrapper, so if calling code sets a finalizer, it won't
+		// overwrite the one we set above.
+		type wrapper struct {
+			io.ReadCloser
+		}
+		newBody = &wrapper{ReadCloser: newBody}
+	}
+	if rw, ok := body.(io.ReadWriteCloser); ok {
+		type readWriteCloser struct {
+			io.ReadCloser
+			io.Writer
+		}
+		newBody = &readWriteCloser{ReadCloser: newBody, Writer: rw}
+	}
+	return newBody
 }
 
 type hookReadCloser struct {
 	io.ReadCloser
-	onClose sync.Once
-	hook    func()
+	hook   func()
+	closed atomic.Bool
 }
 
 func (h *hookReadCloser) done() {
-	h.onClose.Do(h.hook)
+	if h.closed.CompareAndSwap(false, true) {
+		h.hook()
+	}
 }
 
 func (h *hookReadCloser) Read(p []byte) (n int, err error) {
