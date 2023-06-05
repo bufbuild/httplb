@@ -31,7 +31,6 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	errNoRedirects = errors.New("not following redirects")
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
