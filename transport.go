@@ -540,29 +540,42 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 }
 
 func addCompletionHook(req *http.Request, resp *http.Response, whenComplete func(), resourceLeakCallback func(req *http.Request, resp *http.Response)) {
-	newBody := io.ReadCloser(&hookReadCloser{ReadCloser: resp.Body, hook: whenComplete})
+	var hookedBody *hookReadCloser
+	bodyWriter, isWriter := resp.Body.(io.Writer)
+	if isWriter {
+		hookedWriter := &hookReadWriteCloser{
+			hookReadCloser: hookReadCloser{ReadCloser: resp.Body, hook: whenComplete},
+			Writer:         bodyWriter,
+		}
+		hookedBody = &hookedWriter.hookReadCloser
+		resp.Body = hookedWriter
+	} else {
+		hookedBody = &hookReadCloser{ReadCloser: resp.Body, hook: whenComplete}
+		resp.Body = hookedBody
+	}
+
 	if resourceLeakCallback != nil {
-		runtime.SetFinalizer(newBody, func(closer *hookReadCloser) {
-			if closer.closed.CompareAndSwap(false, true) {
+		runtime.SetFinalizer(resp.Body, func(io.ReadCloser) {
+			if hookedBody.closed.CompareAndSwap(false, true) {
 				// If this succeeded, it means the body was not previously closed, which is a leak!
 				resourceLeakCallback(req, resp)
 			}
 		})
-		// Return a wrapper, so if calling code sets a finalizer, it won't
-		// overwrite the one we set above.
-		type wrapper struct {
-			io.ReadCloser
+		// Set resp.Body to a wrapper, so if calling code sets a finalizer, it won't
+		// overwrite the one we just set above.
+		if isWriter {
+			type wrapper struct {
+				io.ReadWriteCloser
+			}
+			//nolint:forcetypeassert // we set this above, so we know it implements this interface
+			resp.Body = &wrapper{ReadWriteCloser: resp.Body.(io.ReadWriteCloser)}
+		} else {
+			type wrapper struct {
+				io.ReadCloser
+			}
+			resp.Body = &wrapper{ReadCloser: resp.Body}
 		}
-		newBody = &wrapper{ReadCloser: newBody}
 	}
-	if w, ok := resp.Body.(io.Writer); ok {
-		type readWriteCloser struct {
-			io.ReadCloser
-			io.Writer
-		}
-		newBody = &readWriteCloser{ReadCloser: newBody, Writer: w}
-	}
-	resp.Body = newBody
 }
 
 type hookReadCloser struct {
@@ -596,3 +609,10 @@ func (h *hookReadCloser) Close() error {
 	h.done()
 	return err
 }
+
+type hookReadWriteCloser struct {
+	hookReadCloser
+	io.Writer
+}
+
+var _ io.ReadWriteCloser = (*hookReadWriteCloser)(nil)
