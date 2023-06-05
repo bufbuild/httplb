@@ -31,7 +31,6 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	errNoRedirects = errors.New("not following redirects")
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
@@ -431,7 +430,7 @@ func (opts *targetOptions) applyDefaults() {
 	}
 	if opts.redirectFunc == nil {
 		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
-			return errNoRedirects
+			return http.ErrUseLastResponse
 		}
 	}
 	if opts.maxResponseHeaderBytes == 0 {
