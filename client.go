@@ -31,6 +31,15 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
+	defaultTTL          = 5 * time.Minute
+	defaultPollInterval = 1 * time.Minute
+	defaultResolver     = NewCachingResolver(
+		NewPollingResolver(
+			NewDNSResolver(net.DefaultResolver, "ip"),
+			defaultPollInterval,
+		),
+		defaultTTL,
+	)
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
@@ -59,6 +68,17 @@ type TargetOption interface {
 func WithRootContext(ctx context.Context) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		opts.rootCtx = ctx
+	})
+}
+
+// WithResolver configures the resolver used to resolve hostnames into
+// individual hosts for the underlying connections.
+//
+// If not provided, the default resolver will resolve A and AAAA records
+// using net.DefaultResolver.
+func WithResolver(resolver Resolver) ClientOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.resolver = resolver
 	})
 }
 
@@ -440,6 +460,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 }
 
 type targetOptions struct {
+	resolver               Resolver
 	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc              func(*http.Request) (*url.URL, error)
 	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
@@ -453,6 +474,9 @@ type targetOptions struct {
 }
 
 func (opts *targetOptions) applyDefaults() {
+	if opts.resolver == nil {
+		opts.resolver = defaultResolver
+	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext
 	}

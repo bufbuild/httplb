@@ -183,7 +183,7 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	// explicitly configured targets are kept warm
 	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
 
-	pool = newTransportPool(m.rootCtx, dest, applyTimeout, schemeConf, opts, m.clientOptions.resourceLeakCallback)
+	pool = newTransportPool(m.rootCtx, targetOpts.resolver, dest, applyTimeout, schemeConf, opts, m.clientOptions.resourceLeakCallback)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
@@ -302,13 +302,15 @@ type transportPool struct {
 	mu sync.RWMutex
 	// TODO: we may need better data structures than this to
 	//       support "picker" interface and efficient selection
-	pool   map[string][]*connection
-	conns  []*connection
-	closed bool
+	pool       map[string][]*connection
+	conns      []*connection
+	closed     bool
+	resolveErr error
 }
 
 func newTransportPool(
-	_ context.Context,
+	ctx context.Context,
+	resolver Resolver,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	factory RoundTripperFactory,
@@ -327,24 +329,73 @@ func newTransportPool(
 		resourceLeakCallback: resourceLeakCallback,
 	}
 
-	go func() {
-		// TODO: customizable resolution (and better DNS resolution than default),
-		//       custom subsetting, etc.
-		defer close(resolved)
-		addr := dest.hostPort
-		result := factory.New(dest.scheme, addr, opts)
-		conn := &connection{
-			addr:    addr,
-			scheme:  result.Scheme,
-			conn:    result.RoundTripper,
-			close:   result.Close,
-			prewarm: result.PreWarm,
-		}
-		pool.mu.Lock()
-		pool.conns = []*connection{conn}
-		pool.pool[addr] = []*connection{conn}
-		pool.mu.Unlock()
-	}()
+	resolver.Resolve(
+		ctx,
+		dest.scheme,
+		dest.hostPort,
+		func(addresses []Address, err error) {
+			newConns := []*connection{}
+			oldConns := map[*connection]struct{}{}
+
+			if addresses != nil {
+				existing := map[string]*connection{}
+
+				pool.mu.RLock()
+				conns := pool.conns
+				pool.mu.RUnlock()
+
+				for _, conn := range conns {
+					existing[conn.addr] = conn
+				}
+
+				for _, addr := range addresses {
+					if _, ok := existing[addr.HostPort]; !ok {
+						result := factory.New(dest.scheme, addr.HostPort, opts)
+						newConns = append(newConns, &connection{
+							scheme:  result.Scheme,
+							addr:    addr.HostPort,
+							conn:    result.RoundTripper,
+							close:   result.Close,
+							prewarm: result.PreWarm,
+						})
+					}
+					delete(existing, addr.HostPort)
+				}
+
+				for _, conn := range existing {
+					oldConns[conn] = struct{}{}
+				}
+			}
+
+			pool.mu.Lock()
+			defer pool.mu.Unlock()
+
+			if pool.conns == nil {
+				close(resolved)
+			}
+
+			pool.resolveErr = err
+
+			// Remove and close stale connections.
+			if len(oldConns) > 0 {
+				for i, conn := range pool.conns {
+					if _, ok := oldConns[conn]; ok {
+						conn.close()
+						if i < len(pool.conns)-1 {
+							copy(pool.conns[i:], pool.conns[i+1:])
+						}
+						pool.conns[len(pool.conns)-1] = nil
+						pool.conns = pool.conns[:len(pool.conns)-1]
+					}
+				}
+			}
+
+			// Append new connections.
+			if len(newConns) > 0 {
+				pool.conns = append(pool.conns, newConns...)
+			}
+		},
+	)
 
 	return pool
 }
@@ -388,15 +439,15 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 
 func (t *transportPool) getConnection() (*connection, error) {
 	t.mu.RLock()
-	conns, closed := t.conns, t.closed
+	conns, closed, resolveErr := t.conns, t.closed, t.resolveErr
 	t.mu.RUnlock()
 
-	if !closed && conns == nil {
+	if !closed && conns == nil && resolveErr == nil {
 		// NB: if resolver returns no addresses, that should
 		//     be represented via empty but non-nil conns...
 		<-t.resolved
 		t.mu.RLock()
-		conns, closed = t.conns, t.closed
+		conns, closed, resolveErr = t.conns, t.closed, t.resolveErr
 		t.mu.RUnlock()
 	}
 
@@ -404,13 +455,19 @@ func (t *transportPool) getConnection() (*connection, error) {
 		return nil, errTransportIsClosed
 	}
 	if len(conns) == 0 {
-		return nil, fmt.Errorf("failed to resolve hostname %q: %w", t.dest.hostPort, errResolverReturnedNoAddresses)
+		if resolveErr == nil {
+			resolveErr = errResolverReturnedNoAddresses
+		}
+		return nil, fmt.Errorf("failed to resolve hostname %q: %w", t.dest.hostPort, resolveErr)
 	}
 	return t.pick(conns), nil
 }
 
 func (t *transportPool) pick(conns []*connection) *connection {
 	// TODO: customizable picker
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	return conns[0]
 }
 
