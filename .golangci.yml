@@ -19,6 +19,7 @@ linters-settings:
       - T any
       - i int
       - wg sync.WaitGroup
+      - ok bool
 linters:
   enable-all: true
   disable:
