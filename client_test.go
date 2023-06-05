@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package httpbalancer
+package httplb
 
 import (
 	"context"
@@ -52,11 +52,18 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	cl := NewClient()
+	client := NewClient()
+	t.Cleanup(func() {
+		err := Close(client)
+		require.NoError(t, err)
+	})
+	err = Prewarm(ctx, client)
+	require.NoError(t, err)
+
 	url := fmt.Sprintf("http://%s/foo", listener.Addr().String())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	require.NoError(t, err)
-	resp, err := cl.Do(req)
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer func() {
 		err := resp.Body.Close()
