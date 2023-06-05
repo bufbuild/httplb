@@ -250,16 +250,21 @@ func WithDisallowUnconfiguredTargets() ClientOption {
 	})
 }
 
-// WithDebugResourceLeaks configures the client so that it panics if it detects
-// a resource leak in a client operation. A resource leak is where the calling
-// code fails to exhaust or close the body of an HTTP response. If your program
-// has such a resource leak, some features of load balancing may not work as
-// expected (for example, a "least loaded" algorithm will see these HTTP
-// responses as forever in progress). Also, attempts to Close a client may
-// hang indefinitely, waiting on these orphaned operations to complete.
-func WithDebugResourceLeaks() ClientOption {
+// WithDebugResourceLeaks configures the client so that it calls the given
+// function if it detects a resource leak in a client operation. A resource
+// leak is where the calling code fails to exhaust or close the body of an
+// HTTP response. If your program has such a resource leak, some features of
+// load balancing may not work as expected. For example, a "least loaded"
+// algorithm will see these HTTP operations as forever in progress. Also,
+// attempts to Close a client may hang indefinitely, waiting on these
+// orphaned operations to complete.
+//
+// It is recommended that, in unit tests of HTTP client code, the client be
+// configured with this option using a callback that will fail the test or
+// panic if a leak is detected.
+func WithDebugResourceLeaks(callback func(req *http.Request, resp *http.Response)) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
-		opts.debugResourceLeaks = true
+		opts.resourceLeakCallback = callback
 	})
 }
 
@@ -332,7 +337,7 @@ type clientOptions struct {
 	computedDefaultTargetOptions targetOptions
 	computedTargetOptions        map[target]*targetOptions
 
-	debugResourceLeaks bool
+	resourceLeakCallback func(req *http.Request, resp *http.Response)
 }
 
 func (opts *clientOptions) applyDefaults() {

@@ -52,7 +52,9 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	client := NewClient(WithDebugResourceLeaks())
+	client := NewClient(WithDebugResourceLeaks(func(*http.Request, *http.Response) {
+		require.Fail(t, "response from %v was finalized but never consumed/closed")
+	}))
 	t.Cleanup(func() {
 		err := Close(client)
 		require.NoError(t, err)

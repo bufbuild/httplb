@@ -229,7 +229,7 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	// explicitly configured targets are kept warm
 	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
 
-	pool = newTransportPool(m.rootCtx, dest, applyTimeout, simpleFactory{}, opts, m.clientOptions.debugResourceLeaks)
+	pool = newTransportPool(m.rootCtx, dest, applyTimeout, simpleFactory{}, opts, m.clientOptions.resourceLeakCallback)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
@@ -338,12 +338,12 @@ type transportPoolEntry struct {
 }
 
 type transportPool struct {
-	dest                target
-	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	roundTripperFactory RoundTripperFactory
-	roundTripperOptions RoundTripperOptions
-	resolved            <-chan struct{}
-	debugResourceLeaks  bool
+	dest                 target
+	applyRequestTimeout  func(ctx context.Context) (context.Context, context.CancelFunc)
+	roundTripperFactory  RoundTripperFactory
+	roundTripperOptions  RoundTripperOptions
+	resolved             <-chan struct{}
+	resourceLeakCallback func(req *http.Request, resp *http.Response)
 
 	mu sync.RWMutex
 	// TODO: we may need better data structures than this to
@@ -359,18 +359,18 @@ func newTransportPool(
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	factory RoundTripperFactory,
 	opts RoundTripperOptions,
-	debugResourceLeaks bool,
+	resourceLeakCallback func(req *http.Request, resp *http.Response),
 ) *transportPool {
 	resolved := make(chan struct{})
 
 	pool := &transportPool{
-		dest:                dest,
-		applyRequestTimeout: applyTimeout,
-		roundTripperFactory: factory,
-		roundTripperOptions: opts,
-		resolved:            resolved,
-		pool:                map[string][]*connection{},
-		debugResourceLeaks:  debugResourceLeaks,
+		dest:                 dest,
+		applyRequestTimeout:  applyTimeout,
+		roundTripperFactory:  factory,
+		roundTripperOptions:  opts,
+		resolved:             resolved,
+		pool:                 map[string][]*connection{},
+		resourceLeakCallback: resourceLeakCallback,
 	}
 
 	go func() {
@@ -410,14 +410,14 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
-	resp.Body = whenComplete(request.URL, resp.Body, func() {
+	addCompletionHook(request, resp, func() {
 		// TODO: may need to use WaitGroup or similar so we can await
 		//       completion of active requests
 		if cancel != nil {
 			cancel()
 		}
 		conn.activeRequests.Add(-1)
-	}, t.debugResourceLeaks)
+	}, t.resourceLeakCallback)
 	return resp, nil
 }
 
@@ -539,12 +539,13 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
 }
 
-func whenComplete(reqURL *url.URL, body io.ReadCloser, callback func(), debugResourceLeaks bool) io.ReadCloser {
-	newBody := io.ReadCloser(&hookReadCloser{ReadCloser: body, hook: callback})
-	if debugResourceLeaks {
+func addCompletionHook(req *http.Request, resp *http.Response, whenComplete func(), resourceLeakCallback func(req *http.Request, resp *http.Response)) {
+	newBody := io.ReadCloser(&hookReadCloser{ReadCloser: resp.Body, hook: whenComplete})
+	if resourceLeakCallback != nil {
 		runtime.SetFinalizer(newBody, func(closer *hookReadCloser) {
-			if !closer.closed.Load() {
-				panic(fmt.Sprintf("response body for request %v was leaked: body not consumed/closed, but finalized", reqURL))
+			if closer.closed.CompareAndSwap(false, true) {
+				// If this succeeded, it means the body was not previously closed, which is a leak!
+				resourceLeakCallback(req, resp)
 			}
 		})
 		// Return a wrapper, so if calling code sets a finalizer, it won't
@@ -554,14 +555,14 @@ func whenComplete(reqURL *url.URL, body io.ReadCloser, callback func(), debugRes
 		}
 		newBody = &wrapper{ReadCloser: newBody}
 	}
-	if rw, ok := body.(io.ReadWriteCloser); ok {
+	if w, ok := resp.Body.(io.Writer); ok {
 		type readWriteCloser struct {
 			io.ReadCloser
 			io.Writer
 		}
-		newBody = &readWriteCloser{ReadCloser: newBody, Writer: rw}
+		newBody = &readWriteCloser{ReadCloser: newBody, Writer: w}
 	}
-	return newBody
+	resp.Body = newBody
 }
 
 type hookReadCloser struct {
@@ -578,7 +579,13 @@ func (h *hookReadCloser) done() {
 
 func (h *hookReadCloser) Read(p []byte) (n int, err error) {
 	n, err = h.ReadCloser.Read(p)
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != nil {
+		// TODO: Is this correct to call here? At this point, we've either
+		// encountered a network error or EOF. Either way, the operation is
+		// complete. But the docs on http.Response.Body suggest that a
+		// connection may not get re-used unless Close() is called (exhausting
+		// the body alone is not sufficient). So maybe we should only hook the
+		// Close() method?
 		h.done()
 	}
 	return n, err
