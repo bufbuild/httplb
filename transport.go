@@ -335,22 +335,23 @@ func newTransportPool(
 		dest.scheme,
 		dest.hostPort,
 		func(addresses []Address, ttl time.Duration, err error) {
+			var firstResolve bool
 			newConns := []*connection{}
 			newPool := map[string][]*connection{}
 			oldPool := map[string][]*connection{}
 
-			defer func() {
-				for _, conns := range oldPool {
-					for _, conn := range conns {
-						conn.close()
+			if len(addresses) > 0 {
+				defer func() {
+					for _, conns := range oldPool {
+						for _, conn := range conns {
+							conn.close()
+						}
 					}
-				}
-			}()
+				}()
 
-			pool.resolveMu.Lock()
-			defer pool.resolveMu.Unlock()
+				pool.resolveMu.Lock()
+				defer pool.resolveMu.Unlock()
 
-			if addresses != nil {
 				for hostPort, conns := range pool.pool {
 					oldPool[hostPort] = conns
 				}
@@ -372,14 +373,26 @@ func newTransportPool(
 						newPool[addr.HostPort] = []*connection{conn}
 					}
 				}
-			}
 
-			pool.mu.Lock()
-			firstResolve := pool.conns == nil
-			pool.conns = newConns
-			pool.pool = newPool
-			pool.resolveErr = err
-			pool.mu.Unlock()
+				pool.mu.Lock()
+				firstResolve = pool.conns == nil
+				pool.conns = newConns
+				pool.pool = newPool
+				pool.resolveErr = err
+				pool.mu.Unlock()
+			} else {
+				pool.mu.Lock()
+				firstResolve = pool.conns == nil
+				// Ensures that these variables will be empty instead of nil,
+				// to signal that the first resolution finished (with error).
+				// Otherwise, keep using stale conns in error case.
+				if firstResolve {
+					pool.conns = newConns
+					pool.pool = newPool
+				}
+				pool.resolveErr = err
+				pool.mu.Unlock()
+			}
 
 			if firstResolve {
 				close(resolved)

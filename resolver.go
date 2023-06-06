@@ -82,8 +82,8 @@ type dnsSingleShotResolver struct {
 }
 
 type pollingResolver struct {
-	resolver SingleShotResolver
-	interval time.Duration
+	resolver   SingleShotResolver
+	defaultTTL time.Duration
 }
 
 type pollingResolverTask struct {
@@ -91,28 +91,23 @@ type pollingResolverTask struct {
 	doneSignal chan struct{}
 }
 
-type cachingResolver struct {
-	resolver   Resolver
-	defaultTTL time.Duration
-}
-
 // NewDNSResolver creates a new resolver that resolves DNS names.
 // You can specify which kind of network addresses to resolve with the network
-// parameter. IP addresses of the type specified by network. The network must
-// be one of "ip", "ip4" or "ip6".
+// parameter, and the resolver will return only IP addresses of the type
+// specified by network. The network must be one of "ip", "ip4" or "ip6".
 // Note that because net.Resolver does not expose the record TTL values, this
-// resolver does not set the expiry.
+// resolver uses the fixed TTL provided in the ttl parameter.
 func NewDNSResolver(
 	resolver *net.Resolver,
 	network string,
-	interval time.Duration,
+	ttl time.Duration,
 ) Resolver {
 	return NewPollingResolver(
 		&dnsSingleShotResolver{
 			resolver: resolver,
 			network:  network,
 		},
-		interval,
+		ttl,
 	)
 }
 
@@ -143,14 +138,15 @@ func (r *dnsSingleShotResolver) ResolveOnce(
 }
 
 // NewPollingResolver creates a new resolver that polls an underlying
-// single-shot resolver on a fixed interval.
+// single-shot resolver whenever the result-set TTL expires. If the underlying
+// resolver does not return a TTL with the result-set, defaultTTL is used.
 func NewPollingResolver(
 	resolver SingleShotResolver,
-	interval time.Duration,
+	defaultTTL time.Duration,
 ) Resolver {
 	return &pollingResolver{
-		resolver: resolver,
-		interval: interval,
+		resolver:   resolver,
+		defaultTTL: defaultTTL,
 	}
 }
 
@@ -164,18 +160,31 @@ func (r *pollingResolver) Resolve(
 		cancel:     cancel,
 		doneSignal: make(chan struct{}),
 	}
-	ticker := time.NewTicker(r.interval)
 	go func() {
 		defer close(task.doneSignal)
 		defer cancel()
 
+		timer := time.NewTimer(0)
+		if !timer.Stop() {
+			<-timer.C
+		}
+
 		for {
-			callback(r.resolver.ResolveOnce(ctx, scheme, hostPort))
+			addresses, ttl, err := r.resolver.ResolveOnce(ctx, scheme, hostPort)
+			callback(addresses, ttl, err)
+
+			if ttl == 0 {
+				ttl = r.defaultTTL
+			}
+			timer.Reset(ttl)
 
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				// Continue.
 			}
 		}
@@ -187,42 +196,4 @@ func (t *pollingResolverTask) Close() error {
 	t.cancel()
 	<-t.doneSignal
 	return nil
-}
-
-// NewCachingResolver creates a new resolver that wraps another resolver and
-// caches the last non-empty result set until it expires. Whenever the resolver
-// runs, if it returns empty results, cached results will be used instead,
-// until those results expire. If the results do not have a TTL, the defaultTTL
-// value will be used instead.
-func NewCachingResolver(
-	resolver Resolver,
-	defaultTTL time.Duration,
-) Resolver {
-	return &cachingResolver{
-		resolver:   resolver,
-		defaultTTL: defaultTTL,
-	}
-}
-
-func (r *cachingResolver) Resolve(
-	ctx context.Context,
-	scheme, hostPort string,
-	callback ResolverCallbackFunc,
-) io.Closer {
-	last := []Address{}
-	expiry := time.Time{}
-
-	return r.resolver.Resolve(ctx, scheme, hostPort, func(addresses []Address, ttl time.Duration, err error) {
-		now := time.Now()
-		if ttl == 0 {
-			ttl = r.defaultTTL
-		}
-		if len(addresses) > 0 {
-			expiry = now.Add(ttl)
-			last = addresses
-		} else if !now.After(expiry) {
-			addresses = last
-		}
-		callback(addresses, ttl, err)
-	})
 }

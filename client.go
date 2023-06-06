@@ -31,12 +31,8 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	defaultTTL          = 5 * time.Minute
-	defaultPollInterval = 1 * time.Minute
-	defaultResolver     = NewCachingResolver(
-		NewDNSResolver(net.DefaultResolver, "ip", defaultPollInterval),
-		defaultTTL,
-	)
+	defaultNameTTL  = 5 * time.Minute
+	defaultResolver = NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
