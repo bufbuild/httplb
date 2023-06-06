@@ -23,14 +23,6 @@ import (
 	"github.com/bufbuild/go-http-balancer/attrs"
 )
 
-// ResolverCallbackFunc is the signature of the resolver callback, which is
-// called to report new name resolution results over time.
-type ResolverCallbackFunc func(
-	addresses []Address,
-	ttl time.Duration,
-	err error,
-)
-
 // Resolver is an interface for types that provide continuous name resolution.
 type Resolver interface {
 	// Resolve the given target name. When the target is resolved into
@@ -55,14 +47,16 @@ type Resolver interface {
 	// The resolver may pass a TTL value for the results to the callback.
 	// If a TTL value is not available, it will be zero instead.
 	Resolve(ctx context.Context, scheme, hostPort string,
-		callback ResolverCallbackFunc) io.Closer
+		callback func(addresses []Address, err error)) io.Closer
 }
 
-// SingleShotResolver is an interface for types that provide single-shot name
+// ResolveProber is an interface for types that provide single-shot name
 // resolution.
-type SingleShotResolver interface {
+type ResolveProber interface {
 	// ResolveOnce resolves the given target name once, returning a slice of
 	// addresses corresponding to the provided scheme and hostname.
+	// The second return value specifies the TTL of the result, or 0 if there
+	// is no known TTL value.
 	ResolveOnce(ctx context.Context, scheme, hostPort string) ([]Address, time.Duration, error)
 }
 
@@ -82,7 +76,7 @@ type dnsSingleShotResolver struct {
 }
 
 type pollingResolver struct {
-	resolver   SingleShotResolver
+	resolver   ResolveProber
 	defaultTTL time.Duration
 }
 
@@ -141,7 +135,7 @@ func (r *dnsSingleShotResolver) ResolveOnce(
 // single-shot resolver whenever the result-set TTL expires. If the underlying
 // resolver does not return a TTL with the result-set, defaultTTL is used.
 func NewPollingResolver(
-	resolver SingleShotResolver,
+	resolver ResolveProber,
 	defaultTTL time.Duration,
 ) Resolver {
 	return &pollingResolver{
@@ -153,7 +147,7 @@ func NewPollingResolver(
 func (r *pollingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
-	callback ResolverCallbackFunc,
+	callback func(addresses []Address, err error),
 ) io.Closer {
 	ctx, cancel := context.WithCancel(ctx)
 	task := &pollingResolverTask{
@@ -171,7 +165,7 @@ func (r *pollingResolver) Resolve(
 
 		for {
 			addresses, ttl, err := r.resolver.ResolveOnce(ctx, scheme, hostPort)
-			callback(addresses, ttl, err)
+			callback(addresses, err)
 
 			if ttl == 0 {
 				ttl = r.defaultTTL

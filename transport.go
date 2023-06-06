@@ -334,7 +334,7 @@ func newTransportPool(
 		ctx,
 		dest.scheme,
 		dest.hostPort,
-		func(addresses []Address, ttl time.Duration, err error) {
+		func(addresses []Address, err error) {
 			var firstResolve bool
 			newConns := []*connection{}
 			newPool := map[string][]*connection{}
