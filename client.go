@@ -34,10 +34,7 @@ var (
 	defaultTTL          = 5 * time.Minute
 	defaultPollInterval = 1 * time.Minute
 	defaultResolver     = NewCachingResolver(
-		NewPollingResolver(
-			NewDNSResolver(net.DefaultResolver, "ip"),
-			defaultPollInterval,
-		),
+		NewDNSResolver(net.DefaultResolver, "ip", defaultPollInterval),
 		defaultTTL,
 	)
 )

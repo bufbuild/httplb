@@ -23,7 +23,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/attrs"
 )
 
-// Resolver is an interface for types that provide continous name resolution.
+// Resolver is an interface for types that provide continuous name resolution.
 type Resolver interface {
 	// Resolve the given target name. When the target is resolved into
 	// backend addresses, they are provided to the given callback.
@@ -47,8 +47,9 @@ type Resolver interface {
 		callback func([]Address, error)) io.Closer
 }
 
-// ResolveOncer is an interface for types that provide one-shot name resolution.
-type ResolveOncer interface {
+// SingleShotResolver is an interface for types that provide single-shot name
+// resolution.
+type SingleShotResolver interface {
 	// ResolveOnce resolves the given target name once, returning a slice of
 	// addresses corresponding to the provided scheme and hostname.
 	ResolveOnce(ctx context.Context, scheme, hostPort string) ([]Address, error)
@@ -69,17 +70,17 @@ type Address struct {
 	Attributes attrs.Attributes
 }
 
-// A DNSResolver uses a net.Resolver to resolve hostnames using the domain name
+// A dnsSingleShotResolver uses a net.Resolver to resolve hostnames using the domain name
 // system. It is a one-shot resolver, since DNS requests are also one-shot.
-type DNSResolver struct {
+type dnsSingleShotResolver struct {
 	resolver *net.Resolver
 	network  string
 }
 
-// A PollingResolver will call an underlying ResolveOncer repeatedly at a set
-// interval.
-type PollingResolver struct {
-	resolver ResolveOncer
+// A pollingResolver will call an underlying SingleShotResolver repeatedly at a
+// set interval.
+type pollingResolver struct {
+	resolver SingleShotResolver
 	interval time.Duration
 }
 
@@ -88,30 +89,37 @@ type pollingResolverTask struct {
 	doneSignal chan struct{}
 }
 
-// A CachingResolver will call an underlying Resolver, and cache valid results
+// A cachingResolver will call an underlying Resolver, and cache valid results
 // until their TTL expires.
-type CachingResolver struct {
+type cachingResolver struct {
 	resolver   Resolver
 	defaultTTL time.Duration
 }
 
-// NewDNSResolver creates a new one-shot resolver that resolves DNS names.
+// NewDNSResolver creates a new resolver that resolves DNS names.
 // You can specify which kind of network addresses to resolve with the network
 // parameter. IP addresses of the type specified by network. The network must
 // be one of "ip", "ip4" or "ip6".
 // Note that because net.Resolver does not expose the record TTL values, this
 // resolver does not set the expiry.
-func NewDNSResolver(resolver *net.Resolver, network string) *DNSResolver {
-	return &DNSResolver{
-		resolver: resolver,
-		network:  network,
-	}
+func NewDNSResolver(
+	resolver *net.Resolver,
+	network string,
+	interval time.Duration,
+) Resolver {
+	return NewPollingResolver(
+		&dnsSingleShotResolver{
+			resolver: resolver,
+			network:  network,
+		},
+		interval,
+	)
 }
 
-// ResolveOnce resolves a DNS name, implementing ResolveOncer.
-func (r *DNSResolver) ResolveOnce(
+// ResolveOnce resolves a DNS name, implementing SingleShotResolver.
+func (r *dnsSingleShotResolver) ResolveOnce(
 	ctx context.Context,
-	scheme, hostPort string,
+	_, hostPort string,
 ) ([]Address, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
@@ -129,19 +137,19 @@ func (r *DNSResolver) ResolveOnce(
 }
 
 // NewPollingResolver creates a new PollingResolver, which will periodically
-// call an underlying ResolveOncer.
+// call an underlying SingleShotResolver.
 func NewPollingResolver(
-	resolver ResolveOncer,
+	resolver SingleShotResolver,
 	interval time.Duration,
-) *PollingResolver {
-	return &PollingResolver{
+) Resolver {
+	return &pollingResolver{
 		resolver: resolver,
 		interval: interval,
 	}
 }
 
 // Resolve starts a polling resolver using the provided parameters.
-func (r *PollingResolver) Resolve(
+func (r *pollingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
 	callback func([]Address, error),
@@ -183,15 +191,15 @@ func (t *pollingResolverTask) Close() error {
 func NewCachingResolver(
 	resolver Resolver,
 	defaultTTL time.Duration,
-) *CachingResolver {
-	return &CachingResolver{
+) Resolver {
+	return &cachingResolver{
 		resolver:   resolver,
 		defaultTTL: defaultTTL,
 	}
 }
 
 // Resolve starts the underlying resolver, providing caching functionality.
-func (r *CachingResolver) Resolve(
+func (r *cachingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
 	callback func([]Address, error),
@@ -201,21 +209,20 @@ func (r *CachingResolver) Resolve(
 	return r.resolver.Resolve(ctx, scheme, hostPort, func(addresses []Address, err error) {
 		now := time.Now()
 
-		if err != nil {
+		if err != nil && len(addresses) == 0 && len(cache) > 0 {
 			// If an error occurred and we have no results, return cached
 			// results. Resolvers are allowed to return errors when they
 			// still return some addresses, so we don't always need cached
 			// addresses.
-			if len(addresses) == 0 && len(cache) > 0 {
-				for key, address := range cache {
-					if now.After(address.Expiry) {
-						delete(cache, key)
-					} else {
-						addresses = append(addresses, address)
-					}
+			for key, address := range cache {
+				if now.After(address.Expiry) {
+					delete(cache, key)
+				} else {
+					addresses = append(addresses, address)
 				}
 			}
-		} else {
+		}
+		if err == nil {
 			for key, address := range cache {
 				if now.After(address.Expiry) {
 					delete(cache, key)
@@ -231,7 +238,6 @@ func (r *CachingResolver) Resolve(
 				cache[address.HostPort] = address
 			}
 		}
-
 		callback(addresses, err)
 	})
 }
