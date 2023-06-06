@@ -299,7 +299,8 @@ type transportPool struct {
 	resolved             <-chan struct{}
 	resourceLeakCallback func(req *http.Request, resp *http.Response)
 
-	mu sync.RWMutex
+	mu        sync.RWMutex
+	resolveMu sync.Mutex
 	// TODO: we may need better data structures than this to
 	//       support "picker" interface and efficient selection
 	pool       map[string][]*connection
@@ -333,66 +334,55 @@ func newTransportPool(
 		ctx,
 		dest.scheme,
 		dest.hostPort,
-		func(addresses []Address, err error) {
+		func(addresses []Address, ttl time.Duration, err error) {
 			newConns := []*connection{}
-			oldConns := map[*connection]struct{}{}
+			newPool := map[string][]*connection{}
+			oldPool := map[string][]*connection{}
+
+			defer func() {
+				for _, conns := range oldPool {
+					for _, conn := range conns {
+						conn.close()
+					}
+				}
+			}()
+
+			pool.resolveMu.Lock()
+			defer pool.resolveMu.Unlock()
 
 			if addresses != nil {
-				existing := map[string]*connection{}
-
-				pool.mu.RLock()
-				conns := pool.conns
-				pool.mu.RUnlock()
-
-				for _, conn := range conns {
-					existing[conn.addr] = conn
+				for hostPort, conns := range pool.pool {
+					oldPool[hostPort] = conns
 				}
-
 				for _, addr := range addresses {
-					if _, ok := existing[addr.HostPort]; !ok {
+					if conns, ok := pool.pool[addr.HostPort]; ok {
+						newConns = append(newConns, conns...)
+						newPool[addr.HostPort] = conns
+						delete(oldPool, addr.HostPort)
+					} else {
 						result := factory.New(dest.scheme, addr.HostPort, opts)
-						newConns = append(newConns, &connection{
+						conn := &connection{
 							scheme:  result.Scheme,
 							addr:    addr.HostPort,
 							conn:    result.RoundTripper,
 							close:   result.Close,
 							prewarm: result.PreWarm,
-						})
+						}
+						newConns = append(newConns, conn)
+						newPool[addr.HostPort] = []*connection{conn}
 					}
-					delete(existing, addr.HostPort)
-				}
-
-				for _, conn := range existing {
-					oldConns[conn] = struct{}{}
 				}
 			}
 
 			pool.mu.Lock()
-			defer pool.mu.Unlock()
-
-			if pool.conns == nil {
-				close(resolved)
-			}
-
+			firstResolve := pool.conns == nil
+			pool.conns = newConns
+			pool.pool = newPool
 			pool.resolveErr = err
+			pool.mu.Unlock()
 
-			// Remove and close stale connections.
-			if len(oldConns) > 0 {
-				for i, conn := range pool.conns {
-					if _, ok := oldConns[conn]; ok {
-						conn.close()
-						if i < len(pool.conns)-1 {
-							copy(pool.conns[i:], pool.conns[i+1:])
-						}
-						pool.conns[len(pool.conns)-1] = nil
-						pool.conns = pool.conns[:len(pool.conns)-1]
-					}
-				}
-			}
-
-			// Append new connections.
-			if len(newConns) > 0 {
-				pool.conns = append(pool.conns, newConns...)
+			if firstResolve {
+				close(resolved)
 			}
 		},
 	)

@@ -23,6 +23,14 @@ import (
 	"github.com/bufbuild/go-http-balancer/attrs"
 )
 
+// ResolverCallbackFunc is the signature of the resolver callback, which is
+// called to report new name resolution results over time.
+type ResolverCallbackFunc func(
+	addresses []Address,
+	ttl time.Duration,
+	err error,
+)
+
 // Resolver is an interface for types that provide continuous name resolution.
 type Resolver interface {
 	// Resolve the given target name. When the target is resolved into
@@ -43,8 +51,11 @@ type Resolver interface {
 	// addresses. But it should keep trying to resolve (and watch
 	// for changes), even in the face of errors, until it is closed or
 	// the given context is cancelled.
+	//
+	// The resolver may pass a TTL value for the results to the callback.
+	// If a TTL value is not available, it will be zero instead.
 	Resolve(ctx context.Context, scheme, hostPort string,
-		callback func([]Address, error)) io.Closer
+		callback ResolverCallbackFunc) io.Closer
 }
 
 // SingleShotResolver is an interface for types that provide single-shot name
@@ -52,7 +63,7 @@ type Resolver interface {
 type SingleShotResolver interface {
 	// ResolveOnce resolves the given target name once, returning a slice of
 	// addresses corresponding to the provided scheme and hostname.
-	ResolveOnce(ctx context.Context, scheme, hostPort string) ([]Address, error)
+	ResolveOnce(ctx context.Context, scheme, hostPort string) ([]Address, time.Duration, error)
 }
 
 // Address contains a resolved address to a host, and any attributes that may be
@@ -61,24 +72,15 @@ type Address struct {
 	// HostPort stores the host:port pair of the resolved address.
 	HostPort string
 
-	// Expiry is the moment at which this record should be considered stale.
-	// If there is no known TTL or expiry for a record, this should be set to
-	// the zero value.
-	Expiry time.Time
-
 	// Attributes is a collection of arbitrary key/value pairs.
 	Attributes attrs.Attributes
 }
 
-// A dnsSingleShotResolver uses a net.Resolver to resolve hostnames using the domain name
-// system. It is a one-shot resolver, since DNS requests are also one-shot.
 type dnsSingleShotResolver struct {
 	resolver *net.Resolver
 	network  string
 }
 
-// A pollingResolver will call an underlying SingleShotResolver repeatedly at a
-// set interval.
 type pollingResolver struct {
 	resolver SingleShotResolver
 	interval time.Duration
@@ -89,8 +91,6 @@ type pollingResolverTask struct {
 	doneSignal chan struct{}
 }
 
-// A cachingResolver will call an underlying Resolver, and cache valid results
-// until their TTL expires.
 type cachingResolver struct {
 	resolver   Resolver
 	defaultTTL time.Duration
@@ -116,28 +116,34 @@ func NewDNSResolver(
 	)
 }
 
-// ResolveOnce resolves a DNS name, implementing SingleShotResolver.
 func (r *dnsSingleShotResolver) ResolveOnce(
 	ctx context.Context,
 	_, hostPort string,
-) ([]Address, error) {
+) ([]Address, time.Duration, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return nil, err
+		// Assume this is not a host:port pair.
+		// There is no possible better heuristic for this, unfortunately.
+		host = hostPort
+		port = ""
 	}
 	addresses, err := r.resolver.LookupNetIP(ctx, r.network, host)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	result := make([]Address, len(addresses))
 	for i, address := range addresses {
-		result[i].HostPort = net.JoinHostPort(address.String(), port)
+		if port != "" {
+			result[i].HostPort = net.JoinHostPort(address.String(), port)
+		} else {
+			result[i].HostPort = address.String()
+		}
 	}
-	return result, nil
+	return result, 0, nil
 }
 
-// NewPollingResolver creates a new PollingResolver, which will periodically
-// call an underlying SingleShotResolver.
+// NewPollingResolver creates a new resolver that polls an underlying
+// single-shot resolver on a fixed interval.
 func NewPollingResolver(
 	resolver SingleShotResolver,
 	interval time.Duration,
@@ -148,11 +154,10 @@ func NewPollingResolver(
 	}
 }
 
-// Resolve starts a polling resolver using the provided parameters.
 func (r *pollingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
-	callback func([]Address, error),
+	callback ResolverCallbackFunc,
 ) io.Closer {
 	ctx, cancel := context.WithCancel(ctx)
 	task := &pollingResolverTask{
@@ -178,16 +183,17 @@ func (r *pollingResolver) Resolve(
 	return task
 }
 
-// Close closes the resolver task.
 func (t *pollingResolverTask) Close() error {
 	t.cancel()
 	<-t.doneSignal
 	return nil
 }
 
-// NewCachingResolver creates a new CachingResolver, which will wrap another
-// resolver and cache valid results until they expire. If an underlying
-// address has no expiry, defaultTTL will be used to set one.
+// NewCachingResolver creates a new resolver that wraps another resolver and
+// caches the last non-empty result set until it expires. Whenever the resolver
+// runs, if it returns empty results, cached results will be used instead,
+// until those results expire. If the results do not have a TTL, the defaultTTL
+// value will be used instead.
 func NewCachingResolver(
 	resolver Resolver,
 	defaultTTL time.Duration,
@@ -198,46 +204,25 @@ func NewCachingResolver(
 	}
 }
 
-// Resolve starts the underlying resolver, providing caching functionality.
 func (r *cachingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
-	callback func([]Address, error),
+	callback ResolverCallbackFunc,
 ) io.Closer {
-	cache := map[string]Address{}
+	last := []Address{}
+	expiry := time.Time{}
 
-	return r.resolver.Resolve(ctx, scheme, hostPort, func(addresses []Address, err error) {
+	return r.resolver.Resolve(ctx, scheme, hostPort, func(addresses []Address, ttl time.Duration, err error) {
 		now := time.Now()
-
-		if err != nil && len(addresses) == 0 && len(cache) > 0 {
-			// If an error occurred and we have no results, return cached
-			// results. Resolvers are allowed to return errors when they
-			// still return some addresses, so we don't always need cached
-			// addresses.
-			for key, address := range cache {
-				if now.After(address.Expiry) {
-					delete(cache, key)
-				} else {
-					addresses = append(addresses, address)
-				}
-			}
+		if ttl == 0 {
+			ttl = r.defaultTTL
 		}
-		if err == nil {
-			for key, address := range cache {
-				if now.After(address.Expiry) {
-					delete(cache, key)
-				}
-			}
-			for i := range addresses {
-				if addresses[i].Expiry.IsZero() {
-					addresses[i].Expiry = now.Add(r.defaultTTL)
-				}
-				cache[addresses[i].HostPort] = addresses[i]
-			}
-			for _, address := range addresses {
-				cache[address.HostPort] = address
-			}
+		if len(addresses) > 0 {
+			expiry = now.Add(ttl)
+			last = addresses
+		} else if !now.After(expiry) {
+			addresses = last
 		}
-		callback(addresses, err)
+		callback(addresses, ttl, err)
 	})
 }

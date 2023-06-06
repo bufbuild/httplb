@@ -16,51 +16,62 @@ package httplb
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-type testResolver struct {
+type resolverResult struct {
 	addresses []Address
+	ttl       time.Duration
 	err       error
 }
 
-func (t *testResolver) ResolveOnce(_ context.Context, _, _ string) ([]Address, error) {
-	return t.addresses, t.err
+type testResolver struct {
+	done    chan struct{}
+	results []resolverResult
 }
 
-func TestCachingResolverDefaultTTL(t *testing.T) {
+func newTestResolver(results []resolverResult) *testResolver {
+	return &testResolver{
+		done:    make(chan struct{}),
+		results: results,
+	}
+}
+
+func (t *testResolver) wait() {
+	<-t.done
+}
+
+func (t *testResolver) Resolve(
+	_ context.Context,
+	_, _ string,
+	cb ResolverCallbackFunc,
+) io.Closer {
+	for _, result := range t.results {
+		cb(result.addresses, result.ttl, result.err)
+	}
+	close(t.done)
+	return io.NopCloser(nil)
+}
+
+func TestCachingResolver(t *testing.T) {
 	t.Parallel()
 
-	arbitraryExpiry := time.Date(2023, 06, 30, 0, 0, 0, 0, time.UTC)
-	addresses := []Address{
-		{
-			HostPort: "with-expiry",
-			Expiry:   arbitraryExpiry,
-		},
-		{
-			HostPort: "without-expiry",
-		},
+	testResolver := newTestResolver([]resolverResult{
+		{addresses: []Address{{HostPort: "1.2.3.4"}}},
+		{err: errors.New("unexpected error")},
+	})
+
+	cacheResolver := NewCachingResolver(testResolver, time.Hour)
+
+	cb := func(addresses []Address, ttl time.Duration, err error) {
+		assert.Contains(t, addresses, Address{HostPort: "1.2.3.4"})
 	}
-
-	signal := make(chan struct{})
-	resolver := NewCachingResolver(
-		NewPollingResolver(
-			&testResolver{addresses: addresses},
-			time.Minute,
-		),
-		time.Hour,
-	)
-
-	callback := func(addresses []Address, err error) {
-		assert.Equal(t, arbitraryExpiry, addresses[0].Expiry)
-		assert.False(t, addresses[1].Expiry.IsZero())
-		close(signal)
-	}
-
-	closer := resolver.Resolve(context.Background(), "https", "test", callback)
-	<-signal
+	closer := cacheResolver.Resolve(context.Background(), "https", "test", cb)
+	testResolver.wait()
 	closer.Close()
 }
