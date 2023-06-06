@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bufbuild/go-http-balancer/resolver"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -113,9 +114,15 @@ func (m *mainTransport) closeKeepWarmPools() {
 			delete(m.pools, dest)
 		}
 	}()
+	grp, _ := errgroup.WithContext(context.Background())
 	for _, pool := range pools {
-		pool.close()
+		pool := pool
+		grp.Go(func() error {
+			pool.close()
+			return nil
+		})
 	}
+	_ = grp.Wait()
 }
 
 func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -298,6 +305,8 @@ type transportPool struct {
 	roundTripperOptions  RoundTripperOptions
 	resolved             <-chan struct{}
 	resourceLeakCallback func(req *http.Request, resp *http.Response)
+	resolverCloser       io.Closer
+	closeComplete        chan struct{}
 
 	mu        sync.RWMutex
 	resolveMu sync.Mutex
@@ -311,7 +320,7 @@ type transportPool struct {
 
 func newTransportPool(
 	ctx context.Context,
-	resolver Resolver,
+	res resolver.Resolver,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	factory RoundTripperFactory,
@@ -328,13 +337,14 @@ func newTransportPool(
 		resolved:             resolved,
 		pool:                 map[string][]*connection{},
 		resourceLeakCallback: resourceLeakCallback,
+		closeComplete:        make(chan struct{}),
 	}
 
-	resolver.Resolve(
+	pool.resolverCloser = res.Resolve(
 		ctx,
 		dest.scheme,
 		dest.hostPort,
-		func(addresses []Address, err error) {
+		func(addresses []resolver.Address, err error) {
 			var firstResolve bool
 			newConns := []*connection{}
 			newPool := map[string][]*connection{}
@@ -511,16 +521,25 @@ func (t *transportPool) close() {
 	conns, alreadyClosed := t.conns, t.closed
 	t.closed = true
 	t.mu.Unlock()
-	if !alreadyClosed {
-		// TODO: If a conn has any active/pending requests, we should
-		//       wait for activity to cease before calling conn.close()
-		for _, conn := range conns {
-			if conn.close != nil {
+	if alreadyClosed {
+		<-t.closeComplete
+		return
+	}
+	grp, _ := errgroup.WithContext(context.Background())
+	grp.Go(t.resolverCloser.Close)
+	for _, conn := range conns {
+		conn := conn
+		if conn.close != nil {
+			grp.Go(func() error {
+				// TODO: If a conn has any active/pending requests, we should
+				//       wait for activity to cease before calling conn.close()
 				conn.close()
-			}
+				return nil
+			})
 		}
 	}
-	// TODO: await all resources being released
+	_ = grp.Wait()
+	close(t.closeComplete)
 }
 
 type connection struct {

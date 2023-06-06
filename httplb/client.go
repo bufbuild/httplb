@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/bufbuild/go-http-balancer/resolver"
 )
 
 //nolint:gochecknoglobals
@@ -32,7 +34,7 @@ var (
 		KeepAlive: 30 * time.Second,
 	}
 	defaultNameTTL  = 5 * time.Minute
-	defaultResolver = NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
+	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
@@ -69,9 +71,9 @@ func WithRootContext(ctx context.Context) ClientOption {
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
-func WithResolver(resolver Resolver) ClientOption {
+func WithResolver(res resolver.Resolver) ClientOption {
 	return targetOptionFunc(func(opts *targetOptions) {
-		opts.resolver = resolver
+		opts.resolver = res
 	})
 }
 
@@ -453,7 +455,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 }
 
 type targetOptions struct {
-	resolver               Resolver
+	resolver               resolver.Resolver
 	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc              func(*http.Request) (*url.URL, error)
 	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
