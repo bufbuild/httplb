@@ -22,6 +22,15 @@ import (
 	"github.com/bufbuild/go-http-balancer/balancer/internal"
 )
 
+//nolint:gochecknoglobals
+var (
+	// RoundRobinFactory creates pickers that pick connections in a "round-robin"
+	// fashion, that is to say, in sequential order. In order to mitigate the risk
+	// of a "thundering herd" scenario, the order of connections is randomized
+	// each time the list of hosts changes.
+	RoundRobinFactory Factory = roundRobinFactory{}
+)
+
 type roundRobinFactory struct{}
 
 type roundRobin struct {
@@ -30,24 +39,19 @@ type roundRobin struct {
 	counter atomic.Uint64
 }
 
-// NewRoundRobinFactory creates a picker factory that picks connections in a
-// "round-robin" fashion, that is to say, in sequential order. In order to
-// mitigate the risk of a "thundering herd" scenario, the order of connections
-// is randomized each time the list of hosts changes.
-func NewRoundRobinFactory() Factory {
-	return &roundRobinFactory{}
-}
-
 func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
 	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
 	for i := 0; i < numConns; i++ {
-		j := rnd.Intn(i + 1)
-		conns[i] = conns[j]
-		conns[j] = allConns.Get(i)
+		conns[i] = allConns.Get(i)
 	}
-	return &roundRobin{conns: conns}
+	rnd.Shuffle(numConns, func(i, j int) {
+		conns[i], conns[j] = conns[j], conns[i]
+	})
+	picker := &roundRobin{conns: conns}
+	picker.counter.Store(^uint64(0))
+	return picker
 }
 
 func (r *roundRobin) Pick(_ *http.Request) (conn conn.Conn, whenDone func(), err error) {

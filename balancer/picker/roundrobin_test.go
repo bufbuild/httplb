@@ -34,8 +34,7 @@ func TestRoundRobinPicker(t *testing.T) {
 		dummyConn,
 	}}
 
-	factory := picker.NewRoundRobinFactory()
-	picker := factory.New(nil, allConns)
+	picker := picker.RoundRobinFactory.New(nil, allConns)
 	conn, _, err := picker.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, conn)
