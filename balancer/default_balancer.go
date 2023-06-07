@@ -30,10 +30,8 @@ import (
 )
 
 var (
-	// +checklocksignore: mu is not required, but happens to always be held.
-	errResolverReturnedNoAddresses = errors.New("resolver returned no addresses")
-	// +checklocksignore: mu is not required, but happens to always be held.
-	errNoHealthyConnections = errors.New("unavailable: no healthy connections")
+	errResolverReturnedNoAddresses = errors.New("resolver returned no addresses")      // +checklocksignore: mu is not required, but happens to always be held.
+	errNoHealthyConnections        = errors.New("unavailable: no healthy connections") // +checklocksignore: mu is not required, but happens to always be held.
 )
 
 // NewFactory returns a new balancer factory. If no options are given,
@@ -131,17 +129,14 @@ func (f *defaultBalancerFactory) New(ctx context.Context, scheme, hostPort strin
 }
 
 type defaultBalancer struct {
-	// +checklocksignore: mu is not required, but happens to always be held.
-	ctx         context.Context //nolint:containedCtx
-	cancel      context.CancelFunc
-	pool        ConnPool
-	connManager connmanager.ConnManager
-	// +checklocksignore: mu is not required, but happens to always be held.
-	picker picker.Factory
-	// +checklocksignore: mu is not required, but happens to always be held.
-	healthChecker healthchecker.Checker
-	// +checklocksignore: mu is not required, but happens to always be held.
-	usabilityOracle healthchecker.UsabilityOracle
+	//nolint:containedCtx
+	ctx             context.Context // +checklocksignore: mu is not required, but happens to always be held.
+	cancel          context.CancelFunc
+	pool            ConnPool
+	connManager     connmanager.ConnManager       // +checklocksignore: mu is not required, but happens to always be held.
+	picker          picker.Factory                // +checklocksignore: mu is not required, but happens to always be held.
+	healthChecker   healthchecker.Checker         // +checklocksignore: mu is not required, but happens to always be held.
+	usabilityOracle healthchecker.UsabilityOracle // +checklocksignore: mu is not required, but happens to always be held.
 
 	closed    chan struct{}
 	closedErr error

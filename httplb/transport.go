@@ -305,13 +305,10 @@ type transportPoolEntry struct {
 }
 
 type transportPool struct {
-	// +checklocksignore: mu is not required, it just happens to be held always.
-	dest                target
-	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	// +checklocksignore: mu is not required, it just happens to be held always.
-	roundTripperFactory RoundTripperFactory
-	// +checklocksignore: mu is not required, it just happens to be held always.
-	roundTripperOptions  RoundTripperOptions
+	dest                 target // +checklocksignore: mu is not required, it just happens to be held always.
+	applyRequestTimeout  func(ctx context.Context) (context.Context, context.CancelFunc)
+	roundTripperFactory  RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
+	roundTripperOptions  RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized    chan struct{}
 	resourceLeakCallback func(req *http.Request, resp *http.Response)
 	resolverCloser       io.Closer
