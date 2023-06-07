@@ -12,25 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package picker
+package picker_test
 
 import (
 	"net/http"
+	"testing"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/internal"
+	"github.com/bufbuild/go-http-balancer/balancer/picker"
+	"github.com/stretchr/testify/assert"
 )
 
-//nolint:gochecknoglobals
-var (
-	RandomFactory Factory = &randomFactory{}
-)
+func TestRoundRobinPicker(t *testing.T) {
+	t.Parallel()
 
-type randomFactory struct{}
+	// TODO: when possible, it'd be good to test multiple connections to verify
+	// that shuffling works and that we get round-robin behavior.
 
-func (r randomFactory) New(_ Picker, allConns conn.Connections) Picker {
-	rnd := internal.NewLockedRand()
-	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-		return allConns.Get(rnd.Intn(allConns.Len())), nil, nil
-	})
+	dummyConn := conn.Conn(nil)
+	allConns := dummyConns{[]conn.Conn{
+		dummyConn,
+	}}
+
+	picker := picker.RoundRobinFactory.New(nil, allConns)
+	conn, _, err := picker.Pick(&http.Request{})
+	assert.NoError(t, err)
+	assert.Equal(t, dummyConn, conn)
 }
