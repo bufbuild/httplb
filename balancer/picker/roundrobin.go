@@ -22,20 +22,21 @@ import (
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 )
 
+//nolint:gochecknoglobals
+var (
+	// RoundRobinFactory creates pickers that pick connections in a "round-robin"
+	// fashion, that is to say, in sequential order. In order to mitigate the risk
+	// of a "thundering herd" scenario, the order of connections is randomized
+	// each time the list of hosts changes.
+	RoundRobinFactory Factory = roundRobinFactory{}
+)
+
 type roundRobinFactory struct{}
 
 type roundRobin struct {
 	conns []conn.Conn
 	// +checkatomic
 	counter atomic.Uint64
-}
-
-// NewRoundRobinFactory creates a picker factory that picks connections in a
-// "round-robin" fashion, that is to say, in sequential order. In order to
-// mitigate the risk of a "thundering herd" scenario, the order of connections
-// is randomized each time the list of hosts changes.
-func NewRoundRobinFactory() Factory {
-	return &roundRobinFactory{}
 }
 
 func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
