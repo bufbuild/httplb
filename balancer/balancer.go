@@ -80,5 +80,14 @@ type ConnPool interface {
 	// The balancer *must* call this at least once. The balancer should call it
 	// as soon as possible after receiving results from a resolver. Operations
 	// will block until the first time it is called.
-	UpdatePicker(picker.Picker)
+	//
+	// The given isWarm flag is used to decide if the pool is sufficiently warmed
+	// up. It should only be set to true if the given picker is immediately usable.
+	// (So if setting a picker that always return errors, for fail-fast conditions,
+	// it should be set to false.)
+	//
+	// The concept of "warmed up" is therefore up to the balancer implementation.
+	// It usually means some minimum number of connections are healthy and
+	// available for use.
+	UpdatePicker(picker picker.Picker, isWarm bool)
 }

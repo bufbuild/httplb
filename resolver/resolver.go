@@ -47,7 +47,7 @@ type Resolver interface {
 	// The resolver may pass a TTL value for the results to the callback.
 	// If a TTL value is not available, it will be zero instead.
 	Resolve(ctx context.Context, scheme, hostPort string,
-		callback func(addresses []Address, err error)) io.Closer
+		onSuccess func([]Address), onError func(error)) io.Closer
 }
 
 // ResolveProber is an interface for types that provide single-shot name
@@ -147,7 +147,8 @@ func NewPollingResolver(
 func (r *pollingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
-	callback func(addresses []Address, err error),
+	onSuccess func([]Address),
+	onError func(error),
 ) io.Closer {
 	ctx, cancel := context.WithCancel(ctx)
 	task := &pollingResolverTask{
@@ -165,7 +166,12 @@ func (r *pollingResolver) Resolve(
 
 		for {
 			addresses, ttl, err := r.resolver.ResolveOnce(ctx, scheme, hostPort)
-			callback(addresses, err)
+			if err != nil {
+				onError(err)
+			} else {
+				onSuccess(addresses)
+			}
+			// TODO: exponential backoff on error
 
 			if ttl == 0 {
 				ttl = r.defaultTTL

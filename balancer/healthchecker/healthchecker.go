@@ -55,7 +55,9 @@ type Checker interface {
 	// when the given context is cancelled or the returned value is closed.
 	//
 	// The process should use the HealthTracker to record the results of the
-	// health checks.
+	// health checks. It should NOT directly call HealthTracker from this
+	// method implementation. If the implementation wants to immediately
+	// update health state, it must do so from a goroutine.
 	New(context.Context, conn.Conn, HealthTracker) io.Closer
 }
 
@@ -66,13 +68,16 @@ type HealthTracker interface {
 // The UsabilityOracle decides which connections are usable. Given the set
 // of all connections and an accessor, for querying the health state of a
 // particular connection, it returns a slice of "usable" connections.
+//
+// Implementations of this function must NOT use the given accessor function
+// after they return.
 type UsabilityOracle func(conn.Connections, func(conn.Conn) HealthState) []conn.Conn
 
 type noOpChecker struct{}
 
 func (n noOpChecker) New(_ context.Context, c conn.Conn, tracker HealthTracker) io.Closer {
 	// the no-op checker assumes all connections are healthy
-	tracker.UpdateHealthState(c, HealthStateHealthy)
+	go tracker.UpdateHealthState(c, HealthStateHealthy)
 	return noOpCloser{}
 }
 
