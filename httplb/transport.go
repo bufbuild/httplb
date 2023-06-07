@@ -62,8 +62,9 @@ type mainTransport struct {
 	idleTransportTimeout time.Duration
 	clientOptions        *clientOptions
 
-	mu     sync.RWMutex
-	pools  map[target]transportPoolEntry
+	mu    sync.RWMutex
+	pools map[target]transportPoolEntry
+	// +checklocks:mu
 	closed bool
 }
 
@@ -79,7 +80,7 @@ func newTransport(opts *clientOptions) *mainTransport {
 	}
 	go func() {
 		// close transport immediately if context is cancelled
-		<-ctx.Done()
+		<-transport.rootCtx.Done()
 		transport.close()
 	}()
 	return transport
@@ -312,9 +313,13 @@ type transportPool struct {
 	resolveMu sync.Mutex
 	// TODO: we may need better data structures than this to
 	//       support "picker" interface and efficient selection
-	pool       map[string][]*connection
-	conns      []*connection
-	closed     bool
+	// +checklocks:resolveMu
+	pool map[string][]*connection
+	// +checklocks:mu
+	conns []*connection
+	// +checklocks:mu
+	closed bool
+	// +checklocks:mu
 	resolveErr error
 }
 
@@ -391,6 +396,11 @@ func newTransportPool(
 				pool.resolveErr = err
 				pool.mu.Unlock()
 			} else {
+				// nb: hold resolveMu to mitigate the potential race with pool
+				// if this callback is called from two different goroutines;
+				// acquire resolveMu first to ensure we don't block mu while
+				// waiting for it
+				pool.resolveMu.Lock()
 				pool.mu.Lock()
 				firstResolve = pool.conns == nil
 				// Ensures that these variables will be empty instead of nil,
@@ -402,6 +412,7 @@ func newTransportPool(
 				}
 				pool.resolveErr = err
 				pool.mu.Unlock()
+				pool.resolveMu.Unlock()
 			}
 
 			if firstResolve {
@@ -549,6 +560,7 @@ type connection struct {
 	close   func()
 	prewarm func(context.Context, string) error
 
+	// +checkatomic
 	activeRequests atomic.Int32
 }
 
@@ -605,7 +617,9 @@ func addCompletionHook(req *http.Request, resp *http.Response, whenComplete func
 
 type hookReadCloser struct {
 	io.ReadCloser
-	hook   func()
+	hook func()
+
+	// +checkatomic
 	closed atomic.Bool
 }
 
