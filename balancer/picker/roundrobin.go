@@ -42,10 +42,11 @@ func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
 	for i := 0; i < numConns; i++ {
-		j := rand.Intn(i + 1) //nolint:gosec
-		conns[i] = conns[j]
-		conns[j] = allConns.Get(i)
+		conns[i] = allConns.Get(i)
 	}
+	rand.Shuffle(numConns, func(i, j int) {
+		conns[i], conns[j] = conns[j], conns[i]
+	})
 	return &roundRobin{conns: conns}
 }
 
