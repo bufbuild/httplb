@@ -15,10 +15,10 @@
 package picker
 
 import (
-	"math/rand"
 	"net/http"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/go-http-balancer/balancer/internal"
 )
 
 //nolint:gochecknoglobals
@@ -29,7 +29,8 @@ var (
 type randomFactory struct{}
 
 func (r randomFactory) New(_ Picker, allConns conn.Connections) Picker {
+	rnd := internal.NewLockedRand()
 	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-		return allConns.Get(rand.Intn(allConns.Len())), nil, nil //nolint:gosec
+		return allConns.Get(rnd.Intn(allConns.Len())), nil, nil
 	})
 }
