@@ -47,7 +47,9 @@ func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
 	rand.Shuffle(numConns, func(i, j int) {
 		conns[i], conns[j] = conns[j], conns[i]
 	})
-	return &roundRobin{conns: conns}
+	picker := &roundRobin{conns: conns}
+	picker.counter.Store(^uint64(0))
+	return picker
 }
 
 func (r *roundRobin) Pick(_ *http.Request) (conn conn.Conn, whenDone func(), err error) {
