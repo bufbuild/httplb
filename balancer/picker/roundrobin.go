@@ -15,11 +15,11 @@
 package picker
 
 import (
-	"math/rand"
 	"net/http"
 	"sync/atomic"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/go-http-balancer/balancer/internal"
 )
 
 //nolint:gochecknoglobals
@@ -40,12 +40,13 @@ type roundRobin struct {
 }
 
 func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
+	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
 	for i := 0; i < numConns; i++ {
 		conns[i] = allConns.Get(i)
 	}
-	rand.Shuffle(numConns, func(i, j int) {
+	rnd.Shuffle(numConns, func(i, j int) {
 		conns[i], conns[j] = conns[j], conns[i]
 	})
 	picker := &roundRobin{conns: conns}
