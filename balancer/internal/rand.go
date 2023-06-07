@@ -24,6 +24,7 @@ import (
 // rand.Rand that are properly seeded, to avoid the global rand's synchronization
 // overhead. In particular, the use maphash.Hash to create a high-quality seed for
 // creating new instances of *rand.Rand.
+//   https://www.reddit.com/r/golang/comments/m9b0yp/comment/grotn1f/
 
 // NewRand returns a properly seeded *rand.Rand. The seed is computed using
 // the "hash/maphash" package, which can be used concurrently and is
