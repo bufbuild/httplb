@@ -15,34 +15,21 @@
 package picker
 
 import (
-	"errors"
 	"math/rand"
 	"net/http"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 )
 
-type randomPickerFactory struct {
-}
+//nolint:gochecknoglobals
+var (
+	RandomFactory Factory = &randomFactory{}
+)
 
-type randomPicker struct {
-	conns conn.Connections
-}
+type randomFactory struct{}
 
-func NewRandomPickerFactory() Factory {
-	return randomPickerFactory{}
-}
-
-func (r randomPickerFactory) New(_ Picker, allConns conn.Connections) Picker {
-	return randomPicker{conns: allConns}
-}
-
-func (r randomPicker) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-	if r.conns.Len() == 0 {
-		// TODO: if returning an error is the way to go, should we make a
-		// standard error value for this?
-		return nil, nil, errors.New("no hosts available")
-	}
-
-	return r.conns.Get(rand.Intn(r.conns.Len())), nil, nil //nolint:gosec
+func (r randomFactory) New(_ Picker, allConns conn.Connections) Picker {
+	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
+		return allConns.Get(rand.Intn(allConns.Len())), nil, nil //nolint:gosec
+	})
 }

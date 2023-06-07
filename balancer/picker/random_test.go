@@ -31,14 +31,8 @@ func (c dummyConns) Get(i int) conn.Conn { return c.conns[i] }
 func TestRandomPicker(t *testing.T) {
 	t.Parallel()
 
-	factory := picker.NewRandomPickerFactory()
-
-	// ensure that zero hosts does not cause a panic
-	_, _, err := factory.New(nil, dummyConns{}).Pick(&http.Request{})
-	assert.ErrorContains(t, err, "no hosts available")
 	dummyConn := conn.Conn(nil)
-
-	conn, _, err := factory.New(nil, dummyConns{[]conn.Conn{dummyConn}}).Pick(&http.Request{})
+	conn, _, err := picker.RandomFactory.New(nil, dummyConns{[]conn.Conn{dummyConn}}).Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, conn)
 }

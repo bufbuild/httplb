@@ -45,3 +45,9 @@ type Factory interface {
 	// need to share state.
 	New(prev Picker, allConns conn.Connections) Picker
 }
+
+type pickerFunc func(*http.Request) (conn conn.Conn, whenDone func(), err error)
+
+func (f pickerFunc) Pick(req *http.Request) (conn conn.Conn, whenDone func(), err error) {
+	return f(req)
+}
