@@ -48,6 +48,8 @@ func NewFactory(opts ...NewFactoryOption) Factory {
 	return factory
 }
 
+// NewFactoryOption is an option for configuring the behavior of a Factory
+// return from NewFactory.
 type NewFactoryOption interface {
 	apply(balancer *defaultBalancerFactory)
 }
@@ -97,10 +99,10 @@ type defaultBalancerFactory struct {
 
 func (f *defaultBalancerFactory) applyDefaults() {
 	if f.connManager == nil {
-		f.connManager = connmanager.NewFactory(connmanager.UseAll())
+		f.connManager = connmanager.NewFactory()
 	}
 	if f.picker == nil {
-		f.picker = picker.ChooseFirstFactory // TODO: use round-robin once implemented
+		f.picker = picker.RoundRobinFactory
 	}
 	if f.healthChecker == nil {
 		f.healthChecker = healthchecker.NoOpChecker
