@@ -32,8 +32,9 @@ type Factory interface {
 }
 
 // ConnUpdater is a function that adds connections for the given newAddrs, removes
-// the given removeConns, and returns the newly created connections (in the same
-// order as given in newAddrs).
+// the given removeConns, and returns the newly created connections. If the
+// associated connection pool is closed or closing, this may return fewer new
+// connections than requested (likely zero).
 type ConnUpdater func(newAddrs []resolver.Address, removeConns []conn.Conn) (added []conn.Conn)
 
 // ConnManager encapsulates part of the logic of a balancer.Balancer. Its

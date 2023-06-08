@@ -78,6 +78,7 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 	for _, addr := range subset {
 		desired[addr.HostPort] = append(desired[addr.HostPort], addr)
 	}
+	remaining := make(map[string][]conn.Conn, len(d.conns))
 
 	for hostPort, got := range d.conns {
 		want := desired[hostPort]
@@ -87,6 +88,7 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 				got[i].UpdateAttributes(want[i].Attributes)
 			}
 			// and schedule new connections to be created
+			remaining[hostPort] = got
 			newAddrs = append(newAddrs, want[len(got):]...)
 		} else {
 			// sync attributes of existing connection with new values from resolver
@@ -94,6 +96,7 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 				got[i].UpdateAttributes(want[i].Attributes)
 			}
 			// schedule extra connections to be removed
+			remaining[hostPort] = got[:len(want)]
 			toRemove = append(toRemove, got[len(want):]...)
 		}
 	}
@@ -105,7 +108,13 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 		newAddrs = append(newAddrs, want...)
 	}
 
-	d.updater(newAddrs, toRemove)
+	newConns := d.updater(newAddrs, toRemove)
+	// add newConns to remaining to compute new set of connections
+	for _, c := range newConns {
+		hostPort := c.Address().HostPort
+		remaining[hostPort] = append(remaining[hostPort], c)
+	}
+	d.conns = remaining
 }
 
 func (d *defaultConnManager) Close() error {

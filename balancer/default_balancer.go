@@ -138,7 +138,10 @@ type defaultBalancer struct {
 	healthChecker   healthchecker.Checker         // +checklocksignore: mu is not required, but happens to always be held.
 	usabilityOracle healthchecker.UsabilityOracle // +checklocksignore: mu is not required, but happens to always be held.
 
-	closed    chan struct{}
+	closed chan struct{}
+	// closedErr is written before writing to closed chan, so can only be read
+	// if closed chan is read first (this pattern is only safe/non-racy for
+	// situations with a single writer)
 	closedErr error
 
 	latestAddrs     atomic.Pointer[[]resolver.Address]
@@ -268,15 +271,27 @@ func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 func (b *defaultBalancer) updateConns(newAddrs []resolver.Address, removeConns []conn.Conn) []conn.Conn {
 	numAdded := len(newAddrs)
 	numRemoved := len(removeConns)
-	addConns := make([]conn.Conn, numAdded)
-	for i, addr := range newAddrs {
-		addConns[i] = b.pool.NewConn(addr)
+	addConns := make([]conn.Conn, 0, numAdded)
+	for _, addr := range newAddrs {
+		newConn, ok := b.pool.NewConn(addr)
+		if ok {
+			addConns = append(addConns, newConn)
+		}
 	}
 	setToRemove := make(map[conn.Conn]struct{}, numRemoved)
 	for _, c := range removeConns {
 		setToRemove[c] = struct{}{}
 	}
 
+	// we wait until we've created a new picker before actually removing
+	// the connections from the underlying pool
+	defer func() {
+		for _, c := range removeConns {
+			// TODO: If this returns false, ConnManager is not well-behaved.
+			//       Should we log or notify somehow?
+			b.pool.RemoveConn(c)
+		}
+	}()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	newConns := make([]conn.Conn, 0, len(b.conns)+numAdded-numRemoved)
