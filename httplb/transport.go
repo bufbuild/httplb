@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -36,6 +37,7 @@ import (
 
 var (
 	errTransportIsClosed = errors.New("transport is closed")
+	errTryAgain          = errors.New("internal: leaf transport closed; try again")
 )
 
 // TODO: add this info (whatever's relevant/user-visible) to doc.go
@@ -64,6 +66,8 @@ type mainTransport struct {
 	cancel               context.CancelFunc
 	idleTransportTimeout time.Duration
 	clientOptions        *clientOptions
+
+	runningPools sync.WaitGroup
 
 	mu sync.RWMutex
 	// +checklocks:mu
@@ -99,7 +103,8 @@ func (m *mainTransport) close() {
 		m.cancel()
 		m.closeKeepWarmPools()
 	}
-	// TODO: await all resources being released
+	// Don't return until everything is cleaned up
+	m.runningPools.Wait()
 }
 
 func (m *mainTransport) closeKeepWarmPools() {
@@ -132,11 +137,17 @@ func (m *mainTransport) closeKeepWarmPools() {
 
 func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	dest := targetFromURL(request.URL)
-	pool, err := m.getOrCreatePool(dest)
-	if err != nil {
-		return nil, err
+	for {
+		pool, err := m.getOrCreatePool(dest)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := pool.RoundTrip(request)
+		if errors.Is(err, errTryAgain) {
+			continue
+		}
+		return resp, err
 	}
-	return pool.RoundTrip(request)
 }
 
 // getOrCreatePool gets the transport pool for the given dest, creating one if
@@ -195,7 +206,18 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	// explicitly configured targets are kept warm
 	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
 
-	pool = newTransportPool(m.rootCtx, targetOpts.resolver, targetOpts.balancer, dest, applyTimeout, schemeConf, opts, m.clientOptions.resourceLeakCallback)
+	m.runningPools.Add(1)
+	pool = newTransportPool(
+		m.rootCtx,
+		targetOpts.resolver,
+		targetOpts.balancer,
+		dest,
+		applyTimeout,
+		schemeConf,
+		opts,
+		m.clientOptions.resourceLeakCallback,
+		m.runningPools.Done,
+	)
 	var activity chan struct{}
 	if !opts.KeepWarm {
 		activity = make(chan struct{}, 1)
@@ -310,10 +332,11 @@ type transportPool struct {
 	roundTripperFactory  RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
 	roundTripperOptions  RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized    chan struct{}
-	resourceLeakCallback func(req *http.Request, resp *http.Response)
+	resourceLeakCallback func(req *http.Request, resp *http.Response) // +checklocksignore: mu is not required, it just happens to be held always.
 	resolverCloser       io.Closer
 	balancer             balancer.Balancer
 	closeComplete        chan struct{}
+	onClose              func()
 
 	picker atomic.Pointer[picker.Picker]
 
@@ -323,7 +346,9 @@ type transportPool struct {
 	// +checklocks:mu
 	warmCond *sync.Cond
 	// +checklocks:mu
-	conns []*connection
+	conns []*connection // active
+	// +checklocks:mu
+	removedConns []*connection // pending closure
 	// +checklocks:mu
 	closed bool
 }
@@ -337,6 +362,7 @@ func newTransportPool(
 	rtFactory RoundTripperFactory,
 	opts RoundTripperOptions,
 	resourceLeakCallback func(req *http.Request, resp *http.Response),
+	onClose func(),
 ) *transportPool {
 	pickerInitialized := make(chan struct{})
 	pool := &transportPool{
@@ -347,6 +373,7 @@ func newTransportPool(
 		pickerInitialized:    pickerInitialized,
 		resourceLeakCallback: resourceLeakCallback,
 		closeComplete:        make(chan struct{}),
+		onClose:              onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
@@ -354,17 +381,29 @@ func newTransportPool(
 	return pool
 }
 
-func (t *transportPool) NewConn(address resolver.Address) conn.Conn {
+func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		return nil, false
+	}
+
 	result := t.roundTripperFactory.New(t.dest.scheme, address.HostPort, t.roundTripperOptions)
 	newConn := &connection{
-		scheme:  result.Scheme,
-		addr:    address.HostPort,
-		conn:    result.RoundTripper,
-		close:   result.Close,
-		prewarm: result.PreWarm,
+		scheme:               result.Scheme,
+		addr:                 address.HostPort,
+		conn:                 result.RoundTripper,
+		doPrewarm:            result.Prewarm,
+		closed:               make(chan struct{}),
+		resourceLeakCallback: t.resourceLeakCallback,
 	}
+	newConn.doClose = func() {
+		if result.Close != nil {
+			result.Close()
+		}
+		t.connClosed(newConn)
+	}
+
 	newConn.UpdateAttributes(address.Attributes)
 
 	// make copy of t.conns that has newConn at the end
@@ -374,14 +413,18 @@ func (t *transportPool) NewConn(address resolver.Address) conn.Conn {
 	newConns[length] = newConn
 	t.conns = newConns
 
-	return newConn
+	return newConn, true
 }
 
-func (t *transportPool) RemoveConn(toRemove conn.Conn) {
+func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// make copy of t.conns that has toRemove omitted
-	newConns := make([]*connection, 0, len(t.conns)-1)
+	newLen := len(t.conns) - 1
+	if newLen < 0 {
+		newLen = 0
+	}
+	newConns := make([]*connection, 0, newLen)
 	found := false
 	for _, connection := range t.conns {
 		if connection == toRemove {
@@ -391,18 +434,32 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) {
 		newConns = append(newConns, connection)
 	}
 	t.conns = newConns
-	if found {
-		//nolint:forcetypeassert // if must be this type or else found could not be true
-		go t.closeConn(toRemove.(*connection))
+	if !found {
+		return false
 	}
+	//nolint:forcetypeassert,errcheck // if must be this type or else found could not be true
+	c := toRemove.(*connection)
+	t.removedConns = append(t.removedConns, c)
+	go c.close()
+	return true
 }
 
-func (t *transportPool) closeConn(toClose *connection) {
-	// TODO: If a conn has any active/pending requests, we should
-	//       wait for activity to cease before calling conn.close()
-	if toClose.close != nil {
-		toClose.close()
+func (t *transportPool) connClosed(closedConn conn.Conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// make copy of t.removedConns that has closedConn omitted
+	newLen := len(t.removedConns) - 1
+	if newLen < 0 {
+		newLen = 0
 	}
+	newRemovedConns := make([]*connection, 0, newLen)
+	for _, connection := range t.conns {
+		if connection == closedConn {
+			continue
+		}
+		newRemovedConns = append(newRemovedConns, connection)
+	}
+	t.removedConns = newRemovedConns
 }
 
 func (t *transportPool) UpdatePicker(picker picker.Picker, isWarm bool) {
@@ -441,21 +498,14 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 		request.URL.Host = chosenAddr
 	}
 
-	resp, err := chosen.RoundTripper().RoundTrip(request)
-	if err != nil {
-		return nil, err
-	}
-	addCompletionHook(request, resp, func() {
-		// TODO: may need to use WaitGroup or similar so we can await
-		//       completion of active requests
+	return chosen.RoundTrip(request, func() {
 		if cancel != nil {
 			cancel()
 		}
 		if whenDone != nil {
 			whenDone()
 		}
-	}, t.resourceLeakCallback)
-	return resp, nil
+	})
 }
 
 func (t *transportPool) getConnection(request *http.Request) (conn.Conn, func(), error) {
@@ -495,10 +545,10 @@ func (t *transportPool) prewarm(ctx context.Context) error {
 	grp, grpCtx := errgroup.WithContext(ctx)
 	for _, current := range conns {
 		// TODO: Do we need to warmup *every* address? Probably not...
-		if current.prewarm != nil {
+		if current.doPrewarm != nil {
 			current := current
 			grp.Go(func() error {
-				return current.prewarm(grpCtx, current.addr)
+				return current.doPrewarm(grpCtx, current.addr)
 			})
 		}
 	}
@@ -541,7 +591,7 @@ func (t *transportPool) prewarm(ctx context.Context) error {
 
 func (t *transportPool) close() {
 	t.mu.Lock()
-	conns, alreadyClosed := t.conns, t.closed
+	conns, removedConns, alreadyClosed := t.conns, t.removedConns, t.closed
 	t.closed = true
 	t.mu.Unlock()
 	if alreadyClosed {
@@ -554,26 +604,41 @@ func (t *transportPool) close() {
 	// Then close the balancer. This will stop calls to create and
 	// remove connections.
 	_ = t.balancer.Close()
-	// Now we can stop all the connections in the pool
+	// Now we can stop all the connections in the pool. We do this
+	// for removed connections, too, to make sure we wait for all
+	// activity to complete before returning. There could still be
+	// in-progress operations on removed connections that we need
+	// to wait for.
 	grp, _ := errgroup.WithContext(context.Background())
-	for _, current := range conns {
-		current := current
-		grp.Go(func() error {
-			t.closeConn(current)
-			return nil
-		})
+	for _, connSlice := range [][]*connection{conns, removedConns} {
+		for _, current := range connSlice {
+			current := current
+			grp.Go(func() error {
+				current.close()
+				return nil
+			})
+		}
 	}
 	_ = grp.Wait()
 	close(t.closeComplete)
+	if t.onClose != nil {
+		t.onClose()
+	}
 }
 
 type connection struct {
-	scheme  string
-	addr    string
-	attrs   atomic.Pointer[attrs.Attributes]
-	conn    http.RoundTripper
-	close   func()
-	prewarm func(context.Context, string) error
+	scheme string
+	addr   string
+	conn   http.RoundTripper
+	attrs  atomic.Pointer[attrs.Attributes]
+
+	doClose   func()
+	doPrewarm func(context.Context, string) error
+
+	resourceLeakCallback func(req *http.Request, resp *http.Response)
+	closed               chan struct{}
+	// +checkatomic
+	outstandingRequests atomic.Int64 // negative value means closing, no more requests
 }
 
 func (c *connection) Scheme() string {
@@ -592,8 +657,72 @@ func (c *connection) UpdateAttributes(attributes attrs.Attributes) {
 	c.attrs.Store(&attributes)
 }
 
-func (c *connection) RoundTripper() http.RoundTripper {
-	return c.conn
+func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Response, error) {
+	if !c.startRequest() {
+		if whenDone != nil {
+			whenDone()
+		}
+		return nil, errTryAgain
+	}
+	onFinish := func() {
+		if whenDone != nil {
+			whenDone()
+		}
+		c.endRequest()
+	}
+	resp, err := c.conn.RoundTrip(req)
+	if err != nil {
+		onFinish()
+		return nil, err
+	}
+	addCompletionHook(req, resp, onFinish, c.resourceLeakCallback)
+	return resp, nil
+}
+
+func (c *connection) startRequest() bool {
+	result := c.outstandingRequests.Add(1)
+	if result < 0 {
+		// marked as closed, abort the request we started
+		c.outstandingRequests.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (c *connection) endRequest() {
+	result := c.outstandingRequests.Add(-1)
+	if result == math.MinInt64 {
+		close(c.closed)
+	}
+}
+
+func (c *connection) close() {
+	// Mark closed.
+	for {
+		reqs := c.outstandingRequests.Load()
+		if reqs < 0 {
+			// already marked
+			break
+		}
+		markedValue := reqs - math.MinInt64
+		if c.outstandingRequests.CompareAndSwap(reqs, markedValue) {
+			// marked!
+			if markedValue == math.MinInt64 {
+				// there were no active requests, so we can close
+				close(c.closed)
+			}
+			break
+		}
+		// another thread updated outstandingRequests, try again
+	}
+
+	// Wait for requests to acquiesce.
+	<-c.closed
+
+	// Finally, close the underlying round-tripper.
+	if c.doClose != nil {
+		c.doClose()
+	}
 }
 
 func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
@@ -608,7 +737,12 @@ func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
 	}
 }
 
-func addCompletionHook(req *http.Request, resp *http.Response, whenComplete func(), resourceLeakCallback func(req *http.Request, resp *http.Response)) {
+func addCompletionHook(
+	req *http.Request,
+	resp *http.Response,
+	whenComplete func(),
+	resourceLeakCallback func(req *http.Request, resp *http.Response),
+) {
 	var hookedBody *hookReadCloser
 	bodyWriter, isWriter := resp.Body.(io.Writer)
 	if isWriter {

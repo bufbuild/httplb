@@ -25,14 +25,16 @@ import (
 // connection. It may actually be represented by zero or more physical
 // connections (i.e. sockets).
 type Conn interface {
+	// RoundTrip sends a request using this connection. This is the same as
+	// [http.RoundTripper]'s method of the same name except that it accepts
+	// a callback that, if non-nil, is invoked when the request is completed.
+	RoundTrip(req *http.Request, whenDone func()) (*http.Response, error)
 	// Scheme returns the URL scheme to use with this connection.
 	Scheme() string
 	// Address is the address used by this connection.
 	Address() resolver.Address
 	// UpdateAttributes updates the connection's address to have the given attributes.
 	UpdateAttributes(attributes attrs.Attributes)
-	// RoundTripper allows sending an HTTP request on this connection.
-	RoundTripper() http.RoundTripper
 }
 
 // Connections represents a read-only set of connections.

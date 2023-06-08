@@ -67,12 +67,15 @@ var _ resolver.Receiver = Balancer(nil)
 type ConnPool interface {
 	// NewConn creates a new connection to the given address, with the given
 	// attributes. Does not block for network connections to be established.
-	NewConn(resolver.Address) conn.Conn
+	// Second return value will be false if a connection could not be created
+	// because the pool is closed or closing.
+	NewConn(resolver.Address) (conn.Conn, bool)
 	// RemoveConn removes the given connection. The balancer must arrange for
 	// the picker to not return the given connection for any operations after
 	// this is called. It may, for example, call UpdatePicker with a new picker
 	// that doesn't even consider this connection before calling RemoveConn.
-	RemoveConn(conn.Conn)
+	// This returns false if the given connection was not present in the pool.
+	RemoveConn(conn.Conn) bool
 	// UpdatePicker updates the picker that the connection pool should use. The
 	// picker is what selects a connection from the set of existing connections
 	// (ones created with NewConn, excluding ones removed with RemoveConn). This

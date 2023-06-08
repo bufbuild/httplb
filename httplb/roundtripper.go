@@ -45,10 +45,10 @@ type RoundTripperResult struct {
 	// Close is an optional function that will be called (if non-nil) when this
 	// round-tripper is no longer needed.
 	Close func()
-	// PreWarm is an optional function that will be called (if non-nil) to
+	// Prewarm is an optional function that will be called (if non-nil) to
 	// eagerly establish connections and perform any other checks so that there
 	// are no delays or unexpected errors incurred by the first HTTP request.
-	PreWarm func(ctx context.Context, addr string) error
+	Prewarm func(ctx context.Context, addr string) error
 }
 
 // RoundTripperOptions defines the options used to create a round-tripper.
