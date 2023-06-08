@@ -447,7 +447,7 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 func (t *transportPool) connClosed(closedConn conn.Conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// make copy of t.conns that has toRemove omitted
+	// make copy of t.removedConns that has closedConn omitted
 	newLen := len(t.removedConns) - 1
 	if newLen < 0 {
 		newLen = 0
@@ -476,7 +476,7 @@ func (t *transportPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 	}
 }
 
-func (t *transportPool) RoundTrip(request *http.Request) (resp *http.Response, err error) {
+func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error) {
 	chosen, whenDone, err := t.getConnection(request)
 	if err != nil {
 		return nil, err
