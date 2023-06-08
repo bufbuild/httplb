@@ -19,7 +19,6 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
-	"sync/atomic"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/internal"
@@ -36,9 +35,6 @@ var (
 	// the least in-flight requests. When a tie occurs, tied hosts will be
 	// picked at random.
 	LeastLoadedRandomFactory Factory = &leastLoadedRandomFactory{}
-
-	_ = heapDuper(&leastLoadedRoundRobin{})
-	_ = heapDuper(&leastLoadedRandom{})
 )
 
 type leastLoadedRoundRobinFactory struct{}
@@ -51,105 +47,64 @@ type leastLoadedBase struct {
 	conns *connHeap
 }
 
-type heapDuper interface {
-	heapDup() connHeap
-}
-
 type leastLoadedRoundRobin struct {
 	leastLoadedBase
-	// +checkatomic
-	counter atomic.Uint64
+	// +checklocks:mu
+	counter uint64
 }
 
 type leastLoadedRandom struct {
 	leastLoadedBase
+	// +checklocks:mu
 	rng *rand.Rand
 }
 
 type connHeap []*connItem
 
 type connItem struct {
-	// We can't express via checklocks, but these atomics are intended to be
-	// mixed with the picker lock: if the mutex is held, reads do not need to
-	// use atomics (but writes still do.)
-	// checklocks actually supports this condition, but there's no way to tell
-	// it where the lock is, since it's not reachable from this struct.
-
-	// NOTE: The atomics must come first, or else we risk breaking 64-bit
-	// alignment on 32-bit platforms.
-
-	// +checkatomic
-	load uint64
-
-	// +checkatomic
+	conn     conn.Conn
+	load     uint64
 	tiebreak uint64
-
-	conn conn.Conn
-
-	index int
-}
-
-func newLeastLoadedHeap(prev Picker, allConns conn.Connections) *connHeap {
-	var newHeap = new(connHeap)
-	if prev, ok := prev.(heapDuper); ok {
-		prevMap := map[conn.Conn]*connItem{}
-		for _, item := range prev.heapDup() {
-			prevMap[item.conn] = item
-		}
-		for i, l := 0, allConns.Len(); i < l; i++ {
-			var load, tiebreak uint64
-			conn := allConns.Get(i)
-			if prev, ok := prevMap[conn]; ok {
-				load = atomic.LoadUint64(&prev.load)
-				tiebreak = atomic.LoadUint64(&prev.tiebreak)
-			}
-			newHeap.Push(&connItem{
-				conn:     conn,
-				load:     load,
-				tiebreak: tiebreak,
-				index:    i,
-			})
-		}
-	} else {
-		for i, l := 0, allConns.Len(); i < l; i++ {
-			newHeap.Push(&connItem{
-				conn:     allConns.Get(i),
-				load:     0,
-				tiebreak: 0,
-				index:    i,
-			})
-		}
-	}
-	return newHeap
+	index    int
 }
 
 func (f leastLoadedRoundRobinFactory) New(prev Picker, allConns conn.Connections) Picker {
-	newHeap := newLeastLoadedHeap(prev, allConns)
+	if prev, ok := prev.(*leastLoadedRoundRobin); ok {
+		prev.mu.Lock()
+		defer prev.mu.Unlock()
+
+		prev.conns.update(allConns)
+		return prev
+	}
+
 	return &leastLoadedRoundRobin{
-		leastLoadedBase: leastLoadedBase{conns: newHeap},
+		leastLoadedBase: leastLoadedBase{
+			conns: newConnHeap(allConns),
+		},
 	}
 }
 
 func (f leastLoadedRandomFactory) New(prev Picker, allConns conn.Connections) Picker {
-	var rng *rand.Rand
-	newHeap := newLeastLoadedHeap(prev, allConns)
 	if prev, ok := prev.(*leastLoadedRandom); ok {
-		rng = prev.rng
-	} else {
-		rng = internal.NewLockedRand()
+		prev.mu.Lock()
+		defer prev.mu.Unlock()
+
+		prev.conns.update(allConns)
+		return prev
 	}
+
 	return &leastLoadedRandom{
-		leastLoadedBase: leastLoadedBase{conns: newHeap},
-		rng:             rng,
+		leastLoadedBase: leastLoadedBase{
+			conns: newConnHeap(allConns),
+		},
+		rng: internal.NewRand(),
 	}
 }
 
-func (p *leastLoadedBase) pick(nextTieBreak uint64) (conn conn.Conn, whenDone func(), err error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+// +checklocks:p.mu
+func (p *leastLoadedBase) pickLocked(nextTieBreak uint64) (conn conn.Conn, whenDone func(), _ error) { //nolint:unparam
 	entry := p.conns.acquire()
-	atomic.StoreUint64(&entry.tiebreak, nextTieBreak)
+	entry.tiebreak = nextTieBreak
 
 	whenDone = func() {
 		p.mu.Lock()
@@ -161,28 +116,68 @@ func (p *leastLoadedBase) pick(nextTieBreak uint64) (conn conn.Conn, whenDone fu
 	return entry.conn, whenDone, nil
 }
 
-func (p *leastLoadedBase) heapDup() connHeap {
+func (p *leastLoadedRoundRobin) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	h := make([]*connItem, len(*p.conns))
-	copy(h, *p.conns)
-	return connHeap(h)
-}
-
-func (p *leastLoadedRoundRobin) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-	return p.leastLoadedBase.pick(p.counter.Add(1))
+	p.counter++
+	return p.leastLoadedBase.pickLocked(p.counter)
 }
 
 func (p *leastLoadedRandom) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-	// TODO: will this give a good random distribution?
-	// need more thought here.
-	return p.leastLoadedBase.pick(p.rng.Uint64())
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.leastLoadedBase.pickLocked(p.rng.Uint64())
+}
+
+func newConnHeap(allConns conn.Connections) *connHeap {
+	newConns := make([]*connItem, allConns.Len())
+	newHeap := connHeap(newConns)
+	for i := range newConns {
+		newConns[i] = &connItem{
+			conn:  allConns.Get(i),
+			index: i,
+		}
+	}
+	heap.Init(&newHeap)
+	return &newHeap
+}
+
+func (h *connHeap) update(allConns conn.Connections) {
+	newMap := map[conn.Conn]struct{}{}
+	for i, l := 0, allConns.Len(); i < l; i++ {
+		newMap[allConns.Get(i)] = struct{}{}
+	}
+
+	for i, l := 0, len(*h); i < l; i++ {
+		item := (*h)[i]
+		if _, ok := newMap[item.conn]; ok {
+			delete(newMap, item.conn)
+		} else {
+			heap.Remove(h, item.index)
+		}
+	}
+
+	for conn := range newMap {
+		heap.Push(h, &connItem{conn: conn})
+	}
+}
+
+func (h *connHeap) acquire() *connItem {
+	entry := (*h)[0]
+	entry.load++
+	heap.Fix(h, entry.index)
+	return entry
+}
+
+func (h *connHeap) release(entry *connItem) {
+	entry.load--
+	heap.Fix(h, entry.index)
 }
 
 func (h connHeap) Len() int { return len(h) }
 
-// +checklocksignore see note regarding atomics in connItem.
 func (h connHeap) Less(i, j int) bool {
 	if h[i].load == h[j].load {
 		return h[i].tiebreak < h[j].tiebreak
@@ -211,16 +206,4 @@ func (h *connHeap) Pop() any {
 	item.index = -1
 	*h = old[0 : n-1]
 	return item
-}
-
-func (h *connHeap) acquire() *connItem {
-	entry := (*h)[0]
-	atomic.AddUint64(&entry.load, 1)
-	heap.Fix(h, entry.index)
-	return entry
-}
-
-func (h *connHeap) release(entry *connItem) {
-	atomic.AddUint64(&entry.load, ^uint64(0))
-	heap.Fix(h, entry.index)
 }
