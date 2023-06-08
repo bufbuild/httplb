@@ -60,6 +60,8 @@ type Balancer interface {
 	Close() error
 }
 
+var _ resolver.Receiver = Balancer(nil)
+
 // ConnPool is the interface through which a Balancer interacts with the HTTP
 // client, creating and destroying "connections" (leaf transports) as needed.
 type ConnPool interface {

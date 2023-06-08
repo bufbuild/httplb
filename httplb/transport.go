@@ -350,15 +350,7 @@ func newTransportPool(
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
-
-	pool.resolverCloser = res.Resolve(
-		ctx,
-		dest.scheme,
-		dest.hostPort,
-		pool.balancer.OnResolve,
-		pool.balancer.OnResolveError,
-	)
-
+	pool.resolverCloser = res.Resolve(ctx, dest.scheme, dest.hostPort, pool.balancer)
 	return pool
 }
 
