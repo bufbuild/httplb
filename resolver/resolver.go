@@ -46,8 +46,19 @@ type Resolver interface {
 	//
 	// The resolver may pass a TTL value for the results to the callback.
 	// If a TTL value is not available, it will be zero instead.
-	Resolve(ctx context.Context, scheme, hostPort string,
-		callback func(addresses []Address, err error)) io.Closer
+	Resolve(ctx context.Context, scheme, hostPort string, receiver Receiver) io.Closer
+}
+
+// Receiver is a client of a resolver and receives the resolved addresses.
+type Receiver interface {
+	// OnResolve is called when the set of addresses is resolved. It may be called
+	// repeatedly as the set of addresses changes over time. Each call must always
+	// supply the full set of resolved addresses (no deltas).
+	OnResolve([]Address)
+	// OnResolveError is called when resolution encounters an error. This can
+	// happen at any time, including after addresses are initially resolved. But
+	// the errors may be ignored after initial resolution.
+	OnResolveError(error)
 }
 
 // ResolveProber is an interface for types that provide single-shot name
@@ -147,7 +158,7 @@ func NewPollingResolver(
 func (r *pollingResolver) Resolve(
 	ctx context.Context,
 	scheme, hostPort string,
-	callback func(addresses []Address, err error),
+	receiver Receiver,
 ) io.Closer {
 	ctx, cancel := context.WithCancel(ctx)
 	task := &pollingResolverTask{
@@ -165,7 +176,12 @@ func (r *pollingResolver) Resolve(
 
 		for {
 			addresses, ttl, err := r.resolver.ResolveOnce(ctx, scheme, hostPort)
-			callback(addresses, err)
+			if err != nil {
+				receiver.OnResolveError(err)
+			} else {
+				receiver.OnResolve(addresses)
+			}
+			// TODO: exponential backoff on error
 
 			if ttl == 0 {
 				ttl = r.defaultTTL

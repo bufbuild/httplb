@@ -15,14 +15,16 @@
 package connmanager
 
 import (
+	"context"
+
+	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
 
 // NewFactory returns a Factory that consults the given
 // Subsetter to decide on the subset of addresses to use.
-func NewFactory(_ Subsetter) Factory {
-	// TODO: implement me!
-	return nil
+func NewFactory(subsetter Subsetter) Factory {
+	return &defaultConnManagerFactory{subsetter: subsetter}
 }
 
 type Subsetter interface {
@@ -30,4 +32,82 @@ type Subsetter interface {
 	// allowed to return duplicates, if it wants to return more addresses than
 	// are actually given.
 	ComputeSubset([]resolver.Address) []resolver.Address
+}
+
+// UseAll returns a Subsetter that doesn't actually do subsetting and instead
+// creates connections to every resolved address.
+func UseAll() Subsetter {
+	return subsetterFunc(func(addrs []resolver.Address) []resolver.Address {
+		return addrs
+	})
+}
+
+type subsetterFunc func([]resolver.Address) []resolver.Address
+
+func (f subsetterFunc) ComputeSubset(addrs []resolver.Address) []resolver.Address {
+	return f(addrs)
+}
+
+type defaultConnManagerFactory struct {
+	subsetter Subsetter
+}
+
+func (d *defaultConnManagerFactory) New(_ context.Context, _, _ string, updateConns ConnUpdater) ConnManager {
+	return &defaultConnManager{
+		subsetter: d.subsetter,
+		updater:   updateConns,
+		conns:     map[string][]conn.Conn{},
+	}
+}
+
+type defaultConnManager struct {
+	subsetter Subsetter
+	updater   ConnUpdater
+	conns     map[string][]conn.Conn
+}
+
+func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
+	// Balancer won't call this concurrently, so we don't need any synchronization.
+	subset := d.subsetter.ComputeSubset(addresses)
+
+	var newAddrs []resolver.Address
+	var toRemove []conn.Conn
+	// We allow subsetter to select the same address more than once. So
+	// partition addresses by hostPort, to make reconciliation below easier.
+	desired := make(map[string][]resolver.Address, len(addresses))
+	for _, addr := range subset {
+		desired[addr.HostPort] = append(desired[addr.HostPort], addr)
+	}
+
+	for hostPort, got := range d.conns {
+		want := desired[hostPort]
+		if len(want) > len(got) {
+			// sync attributes of existing connection with new values from resolver
+			for i := range got {
+				got[i].UpdateAttributes(want[i].Attributes)
+			}
+			// and schedule new connections to be created
+			newAddrs = append(newAddrs, want[len(got):]...)
+		} else {
+			// sync attributes of existing connection with new values from resolver
+			for i := range want {
+				got[i].UpdateAttributes(want[i].Attributes)
+			}
+			// schedule extra connections to be removed
+			toRemove = append(toRemove, got[len(want):]...)
+		}
+	}
+	for hostPort, want := range desired {
+		if _, ok := d.conns[hostPort]; ok {
+			// already checked in loop above
+			continue
+		}
+		newAddrs = append(newAddrs, want...)
+	}
+
+	d.updater(newAddrs, toRemove)
+}
+
+func (d *defaultConnManager) Close() error {
+	return nil
 }

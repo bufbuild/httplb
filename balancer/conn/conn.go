@@ -25,6 +25,8 @@ import (
 // connection. It may actually be represented by zero or more physical
 // connections (i.e. sockets).
 type Conn interface {
+	// Scheme returns the URL scheme to use with this connection.
+	Scheme() string
 	// Address is the address used by this connection.
 	Address() resolver.Address
 	// UpdateAttributes updates the connection's address to have the given attributes.

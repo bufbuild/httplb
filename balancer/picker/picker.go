@@ -20,6 +20,13 @@ import (
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 )
 
+//nolint:gochecknoglobals
+var (
+	// ChooseFirstFactory returns very dumb pickers that always
+	// pick the same connection.
+	ChooseFirstFactory Factory = chooseFirstFactory{}
+)
+
 // Picker implements connection selection. For a given request, it returns
 // the connection to use. It also returns a callback that, if non-nil, will
 // be invoked when the operation is complete. (This happens when the HTTP
@@ -43,11 +50,30 @@ type Factory interface {
 	// but not completed until after the new picker is put in use. Picker
 	// factory implementations need to use care for thread-safety when pickers
 	// need to share state.
+	//
+	// This method will never be called with an empty set of connections. There
+	// will always be at least one connection.
 	New(prev Picker, allConns conn.Connections) Picker
+}
+
+// ErrorPicker returns a picker that always fails with the given error.
+func ErrorPicker(err error) Picker {
+	return pickerFunc(func(*http.Request) (conn.Conn, func(), error) {
+		return nil, nil, err
+	})
 }
 
 type pickerFunc func(*http.Request) (conn conn.Conn, whenDone func(), err error)
 
 func (f pickerFunc) Pick(req *http.Request) (conn conn.Conn, whenDone func(), err error) {
 	return f(req)
+}
+
+type chooseFirstFactory struct{}
+
+func (c chooseFirstFactory) New(_ Picker, allConns conn.Connections) Picker {
+	choice := allConns.Get(0)
+	return pickerFunc(func(*http.Request) (conn.Conn, func(), error) {
+		return choice, nil, nil
+	})
 }

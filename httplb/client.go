@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/bufbuild/go-http-balancer/balancer"
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
 
@@ -33,8 +34,9 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	defaultNameTTL  = 5 * time.Minute
-	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
+	defaultNameTTL         = 5 * time.Minute
+	defaultResolver        = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
+	defaultBalancerFactory = balancer.NewFactory()
 )
 
 // ClientOption is an option used to customize the behavior of an HTTP client.
@@ -66,14 +68,27 @@ func WithRootContext(ctx context.Context) ClientOption {
 	})
 }
 
-// WithResolver configures the resolver used to resolve hostnames into
-// individual hosts for the underlying connections.
+// WithResolver configures the HTTP client to use the given resolver, which
+// is how hostnames are resolved into individual addresses for the underlying
+// connections.
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
 func WithResolver(res resolver.Resolver) ClientOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.resolver = res
+	})
+}
+
+// WithBalancer configures the HTTP client to use the given factory to create
+// [balancer.Balancer] implementations, which are how requests are load balanced
+// to a particular target hostname.
+//
+// If not provided, the default balancer will create connections to all resolved
+// addresses and then pick connections using a round-robin strategy.
+func WithBalancer(balancerFactory balancer.Factory) ClientOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.balancer = balancerFactory
 	})
 }
 
@@ -456,6 +471,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 
 type targetOptions struct {
 	resolver               resolver.Resolver
+	balancer               balancer.Factory
 	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc              func(*http.Request) (*url.URL, error)
 	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
@@ -471,6 +487,9 @@ type targetOptions struct {
 func (opts *targetOptions) applyDefaults() {
 	if opts.resolver == nil {
 		opts.resolver = defaultResolver
+	}
+	if opts.balancer == nil {
+		opts.balancer = defaultBalancerFactory
 	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext
