@@ -21,10 +21,40 @@ import (
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
 
-// NewFactory returns a Factory that consults the given
-// Subsetter to decide on the subset of addresses to use.
-func NewFactory(subsetter Subsetter) Factory {
-	return &defaultConnManagerFactory{subsetter: subsetter}
+//nolint:gochecknoglobals
+var (
+	// NoOpSubsetter doesn't actually do subsetting and instead
+	// creates connections to every resolved address.
+	NoOpSubsetter Subsetter = subsetterFunc(func(addrs []resolver.Address) []resolver.Address {
+		return addrs
+	})
+)
+
+// NewFactory returns a new connection manager factory. If no options
+// are given, ConnManager instances returned by the factory always
+// create connections to every resolved address. See WithSubsetter to
+// alter that behavior.
+func NewFactory(opts ...NewFactoryOption) Factory {
+	factory := &defaultConnManagerFactory{}
+	for _, opt := range opts {
+		opt.apply(factory)
+	}
+	factory.applyDefaults()
+	return factory
+}
+
+// NewFactoryOption is an option for configuring the behavior of a Factory
+// return from NewFactory.
+type NewFactoryOption interface {
+	apply(factory *defaultConnManagerFactory)
+}
+
+// WithSubsetter configures a ConnManager to use the given Subsetter to
+// decide to what resolved addresses connections should be established.
+func WithSubsetter(subsetter Subsetter) NewFactoryOption {
+	return newFactoryOptionFunc(func(factory *defaultConnManagerFactory) {
+		factory.subsetter = subsetter
+	})
 }
 
 type Subsetter interface {
@@ -34,12 +64,10 @@ type Subsetter interface {
 	ComputeSubset([]resolver.Address) []resolver.Address
 }
 
-// UseAll returns a Subsetter that doesn't actually do subsetting and instead
-// creates connections to every resolved address.
-func UseAll() Subsetter {
-	return subsetterFunc(func(addrs []resolver.Address) []resolver.Address {
-		return addrs
-	})
+type newFactoryOptionFunc func(factory *defaultConnManagerFactory)
+
+func (o newFactoryOptionFunc) apply(factory *defaultConnManagerFactory) {
+	o(factory)
 }
 
 type subsetterFunc func([]resolver.Address) []resolver.Address
@@ -50,6 +78,12 @@ func (f subsetterFunc) ComputeSubset(addrs []resolver.Address) []resolver.Addres
 
 type defaultConnManagerFactory struct {
 	subsetter Subsetter
+}
+
+func (d *defaultConnManagerFactory) applyDefaults() {
+	if d.subsetter == nil {
+		d.subsetter = NoOpSubsetter
+	}
 }
 
 func (d *defaultConnManagerFactory) New(_ context.Context, _, _ string, updateConns ConnUpdater) ConnManager {
