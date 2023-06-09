@@ -34,13 +34,12 @@ import (
 )
 
 func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
+	t.Parallel()
 	factory := NewFactory(
 		WithConnManager(deterministicConnManagerFactory{connmanager.NewFactory()}),
 		WithPicker(&fakePickerFactory{}),
 	)
-	pool := &fakeConnPool{
-		pickersUpdate: make(chan struct{}, 10),
-	}
+	pool := newFakeConnPool()
 	balancer := factory.New(context.Background(), "http", "foo.com", pool)
 
 	// Initial resolve
@@ -89,11 +88,23 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 }
 
 type fakeConnPool struct {
-	mu            sync.Mutex
-	index         int
-	active        map[conn.Conn]struct{}
-	pickers       []pickerState
-	pickersUpdate chan struct{}
+	pickerUpdate chan struct{}
+	connsUpdate  chan struct{}
+
+	mu sync.Mutex
+	// +checklocks:mu
+	index int
+	// +checklocks:mu
+	active map[conn.Conn]struct{}
+	// +checklocks:mu
+	pickers []pickerState
+}
+
+func newFakeConnPool() *fakeConnPool {
+	return &fakeConnPool{
+		pickerUpdate: make(chan struct{}, 1),
+		connsUpdate:  make(chan struct{}, 1),
+	}
 }
 
 func (p *fakeConnPool) NewConn(address resolver.Address) (conn.Conn, bool) {
@@ -104,22 +115,30 @@ func (p *fakeConnPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 		p.active = map[conn.Conn]struct{}{}
 	}
 	p.index++
-	c := &fakeConn{index: p.index}
-	c.addr.Store(&address)
-	p.active[c] = struct{}{}
-	return c, true
+	newConn := &fakeConn{index: p.index}
+	newConn.addr.Store(&address)
+	p.active[newConn] = struct{}{}
+	select {
+	case p.connsUpdate <- struct{}{}:
+	default:
+	}
+	return newConn, true
 }
 
-func (p *fakeConnPool) RemoveConn(c conn.Conn) bool {
+func (p *fakeConnPool) RemoveConn(toRemove conn.Conn) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if _, ok := p.active[c]; !ok {
+	if _, ok := p.active[toRemove]; !ok {
 		// Our balancer and conn manager impls should be well-behaved. So this should never happen.
 		// So instead of returning false, let's freak out and make sure the test fails.
-		panic("misbehaving balancer or conn manager")
+		panic("misbehaving balancer or conn manager") //nolint:forbidigo
 	}
-	delete(p.active, c)
+	delete(p.active, toRemove)
+	select {
+	case p.connsUpdate <- struct{}{}:
+	default:
+	}
 	return true
 }
 
@@ -133,27 +152,19 @@ func (p *fakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 	}
 	p.pickers = append(p.pickers, pickerState{picker: picker, isWarm: isWarm, activeSnapshot: snapshot})
 	select {
-	case p.pickersUpdate <- struct{}{}:
+	case p.pickerUpdate <- struct{}{}:
 	default:
 	}
 }
 
-func (p *fakeConnPool) snapshotActive() map[conn.Conn]struct{} {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	snapshot := make(map[conn.Conn]struct{}, len(p.active))
-	for k, v := range p.active {
-		snapshot[k] = v
-	}
-	return snapshot
-}
-
+//nolint:unparam // warm is always true now, but upcoming test cases will pass false
 func (p *fakeConnPool) awaitPickerUpdate(t *testing.T, warm bool, addrs []resolver.Address, indexes []int) {
+	t.Helper()
 	timer := time.After(time.Second)
 	var lastState *pickerState
 	for {
 		select {
-		case <-p.pickersUpdate:
+		case <-p.pickerUpdate:
 			p.mu.Lock()
 			if len(p.pickers) == 0 {
 				lastState = nil
@@ -165,9 +176,7 @@ func (p *fakeConnPool) awaitPickerUpdate(t *testing.T, warm bool, addrs []resolv
 				return
 			}
 		case <-timer:
-			if lastState == nil {
-				require.FailNow(t, "didn't get picker update after 1 second")
-			}
+			require.NotNil(t, lastState, "didn't get picker update after 1 second")
 			want := connStatesFromAddrsIndexes(addrs, indexes)
 			got := connStatesFromSnapshot(lastState.activeSnapshot)
 			require.FailNow(t, "didn't get expected picker update after 1 second", "want %+v\ngot %+v", want, got)
@@ -176,27 +185,23 @@ func (p *fakeConnPool) awaitPickerUpdate(t *testing.T, warm bool, addrs []resolv
 }
 
 func (p *fakeConnPool) awaitConns(t *testing.T, addrs []resolver.Address, indexes []int) {
-	deadline := time.Now().Add(time.Second)
-	ticker := time.NewTimer(50 * time.Millisecond)
-	immediate := make(chan struct{})
-	close(immediate)
-	defer ticker.Stop()
+	t.Helper()
+	timer := time.After(time.Second)
 	want := connStatesFromAddrsIndexes(addrs, indexes)
+	var got map[connState]attrs.Attributes
 	for {
 		select {
-		case <-ticker.C:
-		case <-immediate:
+		case <-p.connsUpdate:
+			p.mu.Lock()
+			got = connStatesFromSnapshot(p.active)
+			p.mu.Unlock()
+			if reflect.DeepEqual(want, got) {
+				return
+			}
+		case <-timer:
+			require.NotNil(t, got, "didn't get connection update after 1 second")
+			require.FailNow(t, "didn't get expected active connections after 1 second", "want %+v\ngot %+v", want, got)
 		}
-		p.mu.Lock()
-		got := connStatesFromSnapshot(p.active)
-		p.mu.Unlock()
-		if reflect.DeepEqual(want, got) {
-			return
-		}
-		if time.Now().After(deadline) {
-			require.FailNow(t, "didn't get expected picker update after 1 second", "want %+v\ngot %+v", want, got)
-		}
-		immediate = nil // immediate is only to trigger an immediate check, instead of waiting 50 millis for first check
 	}
 }
 
@@ -236,7 +241,7 @@ func connStatesFromSnapshot(snapshot map[conn.Conn]struct{}) map[connState]attrs
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*fakeConn).index,
+			index:    c.(*fakeConn).index, //nolint:forcetypeassert
 		}] = c.Address().Attributes
 	}
 	return got
