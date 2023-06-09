@@ -16,6 +16,7 @@ package healthchecker
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
@@ -28,7 +29,7 @@ var (
 		usable := make([]conn.Conn, 0, length)
 		for i := 0; i < length; i++ {
 			connection := allCons.Get(i)
-			if state(connection) == HealthStateHealthy {
+			if state(connection) == Healthy {
 				usable = append(usable, connection)
 			}
 		}
@@ -41,11 +42,26 @@ var (
 type HealthState int
 
 const (
-	HealthStateUnknown = HealthState(iota)
-	HealthStateHealthy
-	HealthStateDegraded
-	HealthStateUnhealthy
+	Unknown = HealthState(iota)
+	Healthy
+	Degraded
+	Unhealthy
 )
+
+func (s HealthState) String() string {
+	switch s {
+	case Healthy:
+		return "healthy"
+	case Degraded:
+		return "degraded"
+	case Unhealthy:
+		return "unhealthy"
+	case Unknown:
+		return "unknown"
+	default:
+		return fmt.Sprintf("invalid? (%d)", s)
+	}
+}
 
 // Checker manages health checks. It creates new checking processes as new
 // connections are created. Each process can be independently stopped.
@@ -77,7 +93,7 @@ type noOpChecker struct{}
 
 func (n noOpChecker) New(_ context.Context, c conn.Conn, tracker HealthTracker) io.Closer {
 	// the no-op checker assumes all connections are healthy
-	go tracker.UpdateHealthState(c, HealthStateHealthy)
+	go tracker.UpdateHealthState(c, Healthy)
 	return noOpCloser{}
 }
 
