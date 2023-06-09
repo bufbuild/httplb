@@ -36,7 +36,7 @@ type roundRobinFactory struct{}
 type roundRobin struct {
 	conns []conn.Conn
 	// +checkatomic
-	counter atomic.Uint64
+	counter atomic.Int64
 }
 
 func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
@@ -50,11 +50,10 @@ func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
 		conns[i], conns[j] = conns[j], conns[i]
 	})
 	picker := &roundRobin{conns: conns}
-	negativeOne := int64(-1)
-	picker.counter.Store(uint64(negativeOne))
+	picker.counter.Store(-1)
 	return picker
 }
 
 func (r *roundRobin) Pick(_ *http.Request) (conn conn.Conn, whenDone func(), err error) {
-	return r.conns[r.counter.Add(1)%uint64(len(r.conns))], nil, nil
+	return r.conns[uint64(r.counter.Add(1))%uint64(len(r.conns))], nil, nil
 }

@@ -40,7 +40,7 @@ type powerOfTwo struct {
 type powerOfTwoConnItem struct {
 	conn conn.Conn
 	// +checkatomic
-	load atomic.Uint64
+	load atomic.Int64
 }
 
 func (f powerOfTwoFactory) New(prev Picker, allConns conn.Connections) Picker {
@@ -73,7 +73,7 @@ func (p *powerOfTwo) Pick(*http.Request) (conn conn.Conn, whenDone func(), err e
 	entry2 := p.conns[p.rng.Intn(len(p.conns))]
 
 	var entry *powerOfTwoConnItem
-	if entry1.load.Load() < entry2.load.Load() {
+	if uint64(entry1.load.Load()) < uint64(entry2.load.Load()) {
 		entry = entry1
 	} else {
 		entry = entry2
@@ -81,11 +81,7 @@ func (p *powerOfTwo) Pick(*http.Request) (conn conn.Conn, whenDone func(), err e
 
 	entry.load.Add(1)
 	whenDone = func() {
-		// Ugly way to decrement atomic.Uint64; still compiles down to atomic
-		// decrement instructions.
-		// https://godbolt.org/z/exr647cMq
-		negativeOne := int64(-1)
-		entry.load.Add(uint64(negativeOne))
+		entry.load.Add(-1)
 	}
 
 	return entry.conn, whenDone, nil
