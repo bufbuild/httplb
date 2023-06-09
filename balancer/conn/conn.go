@@ -44,3 +44,32 @@ type Connections interface {
 	// Get returns the connection at index i.
 	Get(i int) Conn
 }
+
+// Set is a set of connections. Since connections are map keys in the
+// underlying type, they are unique. Standard map iteration is used to
+// enumerate the contents of the set.
+type Set map[Conn]struct{}
+
+// Contains returns true if the set contains the given connection.
+func (s Set) Contains(c Conn) bool {
+	_, ok := s[c]
+	return ok
+}
+
+// ConnectionsToSet converts a conn.Connections into a conn.Set.
+func ConnectionsToSet(conns Connections) Set {
+	set := Set{}
+	for i := 0; i < conns.Len(); i++ {
+		set[conns.Get(i)] = struct{}{}
+	}
+	return set
+}
+
+// SliceToSet converts a []conn.Conn into a conn.Set.
+func SliceToSet(conns []Conn) Set {
+	set := Set{}
+	for _, c := range conns {
+		set[c] = struct{}{}
+	}
+	return set
+}

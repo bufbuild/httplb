@@ -16,19 +16,14 @@ package balancer
 
 import (
 	"context"
-	"errors"
-	"net/http"
 	"reflect"
-	"sort"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/bufbuild/go-http-balancer/attrs"
+	"github.com/bufbuild/go-http-balancer/balancer/balancertesting"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/connmanager"
-	"github.com/bufbuild/go-http-balancer/balancer/picker"
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"github.com/stretchr/testify/require"
 )
@@ -36,10 +31,10 @@ import (
 func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
 	factory := NewFactory(
-		WithConnManager(deterministicConnManagerFactory{connmanager.NewFactory()}),
-		WithPicker(&fakePickerFactory{}),
+		WithConnManager(balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())),
+		WithPicker(balancertesting.FakePickerFactory),
 	)
-	pool := newFakeConnPool()
+	pool := balancertesting.NewFakeConnPool()
 	balancer := factory.New(context.Background(), "http", "foo.com", pool)
 
 	// Initial resolve
@@ -50,7 +45,7 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 		{HostPort: "1.2.3.4"},
 	}
 	balancer.OnResolve(addrs)
-	pool.awaitPickerUpdate(t, true, addrs, []int{1, 2, 3, 4})
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 3, 4})
 
 	// redundant addrs should result in extra conns to those addrs
 	addrs = []resolver.Address{
@@ -62,7 +57,7 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 		{HostPort: "1.2.3.4"},
 	}
 	balancer.OnResolve(addrs)
-	pool.awaitPickerUpdate(t, true, addrs, []int{1, 2, 3, 4, 5, 6})
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 3, 4, 5, 6})
 
 	// make sure conns are removed when their addr goes away
 	addrs = []resolver.Address{
@@ -71,7 +66,7 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 		{HostPort: "1.2.3.3"},
 	}
 	balancer.OnResolve(addrs)
-	pool.awaitPickerUpdate(t, true, addrs, []int{1, 2, 3})
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 3})
 
 	// finally, add some new IPs, and expect some new conns
 	addrs = []resolver.Address{
@@ -81,142 +76,58 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 		{HostPort: "1.2.3.11"},
 	}
 	balancer.OnResolve(addrs)
-	pool.awaitPickerUpdate(t, true, addrs, []int{1, 2, 7, 8})
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 7, 8})
 
 	// Also make sure the set of all conns (not just ones that the picker sees) arrives at the right state
-	pool.awaitConns(t, addrs, []int{1, 2, 7, 8})
-}
-
-type fakeConnPool struct {
-	pickerUpdate chan struct{}
-	connsUpdate  chan struct{}
-
-	mu sync.Mutex
-	// +checklocks:mu
-	index int
-	// +checklocks:mu
-	active map[conn.Conn]struct{}
-	// +checklocks:mu
-	pickers []pickerState
-}
-
-func newFakeConnPool() *fakeConnPool {
-	return &fakeConnPool{
-		pickerUpdate: make(chan struct{}, 1),
-		connsUpdate:  make(chan struct{}, 1),
-	}
-}
-
-func (p *fakeConnPool) NewConn(address resolver.Address) (conn.Conn, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.active == nil {
-		p.active = map[conn.Conn]struct{}{}
-	}
-	p.index++
-	newConn := &fakeConn{index: p.index}
-	newConn.addr.Store(&address)
-	p.active[newConn] = struct{}{}
-	select {
-	case p.connsUpdate <- struct{}{}:
-	default:
-	}
-	return newConn, true
-}
-
-func (p *fakeConnPool) RemoveConn(toRemove conn.Conn) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if _, ok := p.active[toRemove]; !ok {
-		// Our balancer and conn manager impls should be well-behaved. So this should never happen.
-		// So instead of returning false, let's freak out and make sure the test fails.
-		panic("misbehaving balancer or conn manager") //nolint:forbidigo
-	}
-	delete(p.active, toRemove)
-	select {
-	case p.connsUpdate <- struct{}{}:
-	default:
-	}
-	return true
-}
-
-func (p *fakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	var snapshot map[conn.Conn]struct{}
-	if fake, ok := picker.(*fakePicker); ok {
-		snapshot = fake.conns
-	}
-	p.pickers = append(p.pickers, pickerState{picker: picker, isWarm: isWarm, activeSnapshot: snapshot})
-	select {
-	case p.pickerUpdate <- struct{}{}:
-	default:
-	}
+	awaitConns(t, pool, addrs, []int{1, 2, 7, 8})
 }
 
 //nolint:unparam // warm is always true now, but upcoming test cases will pass false
-func (p *fakeConnPool) awaitPickerUpdate(t *testing.T, warm bool, addrs []resolver.Address, indexes []int) {
+func awaitPickerUpdate(t *testing.T, pool *balancertesting.FakeConnPool, warm bool, addrs []resolver.Address, indexes []int) {
 	t.Helper()
-	timer := time.After(time.Second)
-	var lastState *pickerState
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var lastState *balancertesting.PickerState
 	for {
-		select {
-		case <-p.pickerUpdate:
-			p.mu.Lock()
-			if len(p.pickers) == 0 {
-				lastState = nil
-			} else {
-				lastState = &p.pickers[len(p.pickers)-1]
-			}
-			p.mu.Unlock()
-			if lastState != nil && lastState.check(warm, addrs, indexes) {
-				return
-			}
-		case <-timer:
+		state, err := pool.AwaitPickerUpdate(ctx)
+		if err != nil {
 			require.NotNil(t, lastState, "didn't get picker update after 1 second")
 			want := connStatesFromAddrsIndexes(addrs, indexes)
-			got := connStatesFromSnapshot(lastState.activeSnapshot)
+			got := connStatesFromSnapshot(lastState.SnapshotConns)
 			require.FailNow(t, "didn't get expected picker update after 1 second", "want %+v\ngot %+v", want, got)
 		}
+		if checkState(state, warm, addrs, indexes) {
+			return // success!
+		}
+		lastState = &state
 	}
 }
 
-func (p *fakeConnPool) awaitConns(t *testing.T, addrs []resolver.Address, indexes []int) {
+func awaitConns(t *testing.T, pool *balancertesting.FakeConnPool, addrs []resolver.Address, indexes []int) {
 	t.Helper()
-	timer := time.After(time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	want := connStatesFromAddrsIndexes(addrs, indexes)
 	var got map[connState]attrs.Attributes
 	for {
-		select {
-		case <-p.connsUpdate:
-			p.mu.Lock()
-			got = connStatesFromSnapshot(p.active)
-			p.mu.Unlock()
-			if reflect.DeepEqual(want, got) {
-				return
-			}
-		case <-timer:
+		snapshot, err := pool.AwaitConnUpdate(ctx)
+		if err != nil {
 			require.NotNil(t, got, "didn't get connection update after 1 second")
 			require.FailNow(t, "didn't get expected active connections after 1 second", "want %+v\ngot %+v", want, got)
+		}
+		got = connStatesFromSnapshot(snapshot)
+		if reflect.DeepEqual(want, got) {
+			return
 		}
 	}
 }
 
-type pickerState struct {
-	picker         picker.Picker
-	isWarm         bool
-	activeSnapshot map[conn.Conn]struct{}
-}
-
-func (s pickerState) check(warm bool, addrs []resolver.Address, indexes []int) bool {
-	if s.isWarm != warm {
+func checkState(state balancertesting.PickerState, warm bool, addrs []resolver.Address, indexes []int) bool {
+	if state.IsWarm != warm {
 		return false
 	}
 	want := connStatesFromAddrsIndexes(addrs, indexes)
-	got := connStatesFromSnapshot(s.activeSnapshot)
+	got := connStatesFromSnapshot(state.SnapshotConns)
 	return reflect.DeepEqual(want, got)
 }
 
@@ -241,59 +152,8 @@ func connStatesFromSnapshot(snapshot map[conn.Conn]struct{}) map[connState]attrs
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*fakeConn).index, //nolint:forcetypeassert
+			index:    c.(*balancertesting.FakeConn).Index, //nolint:forcetypeassert
 		}] = c.Address().Attributes
 	}
 	return got
-}
-
-type fakePickerFactory struct{}
-
-func (f *fakePickerFactory) New(_ picker.Picker, allConns conn.Connections) picker.Picker {
-	conns := map[conn.Conn]struct{}{}
-	for i := 0; i < allConns.Len(); i++ {
-		conns[allConns.Get(i)] = struct{}{}
-	}
-	return &fakePicker{conns: conns}
-}
-
-type fakePicker struct {
-	conns map[conn.Conn]struct{}
-}
-
-func (p *fakePicker) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-	for c := range p.conns {
-		return c, nil, nil
-	}
-	return nil, nil, errors.New("zero conns")
-}
-
-type fakeConn struct {
-	conn.Conn
-	addr  atomic.Pointer[resolver.Address]
-	index int
-}
-
-func (c *fakeConn) Address() resolver.Address {
-	return *c.addr.Load()
-}
-
-func (c *fakeConn) UpdateAttributes(attributes attrs.Attributes) {
-	addr := c.Address()
-	addr.Attributes = attributes
-	c.addr.Store(&addr)
-}
-
-type deterministicConnManagerFactory struct {
-	connmanager.Factory
-}
-
-func (f deterministicConnManagerFactory) New(ctx context.Context, scheme, hostPort string, updateConns connmanager.ConnUpdater) connmanager.ConnManager {
-	return f.Factory.New(ctx, scheme, hostPort, func(newAddrs []resolver.Address, removeConns []conn.Conn) (added []conn.Conn) {
-		// sort new addresses, so they get created in deterministic order according to address test
-		sort.Slice(newAddrs, func(i, j int) bool {
-			return newAddrs[i].HostPort < newAddrs[j].HostPort
-		})
-		return updateConns(newAddrs, removeConns)
-	})
 }
