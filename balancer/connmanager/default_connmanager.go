@@ -18,16 +18,8 @@ import (
 	"context"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/go-http-balancer/balancer/subsetter"
 	"github.com/bufbuild/go-http-balancer/resolver"
-)
-
-//nolint:gochecknoglobals
-var (
-	// NoOpSubsetter doesn't actually do subsetting and instead
-	// creates connections to every resolved address.
-	NoOpSubsetter Subsetter = subsetterFunc(func(addrs []resolver.Address) []resolver.Address {
-		return addrs
-	})
 )
 
 // NewFactory returns a new connection manager factory. If no options
@@ -51,17 +43,10 @@ type NewFactoryOption interface {
 
 // WithSubsetter configures a ConnManager to use the given Subsetter to
 // decide to what resolved addresses connections should be established.
-func WithSubsetter(subsetter Subsetter) NewFactoryOption {
+func WithSubsetter(subsetter subsetter.Subsetter) NewFactoryOption {
 	return newFactoryOptionFunc(func(factory *defaultConnManagerFactory) {
 		factory.subsetter = subsetter
 	})
-}
-
-type Subsetter interface {
-	// ComputeSubset returns a static subset of the given addresses. It is
-	// allowed to return duplicates, if it wants to return more addresses than
-	// are actually given.
-	ComputeSubset([]resolver.Address) []resolver.Address
 }
 
 type newFactoryOptionFunc func(factory *defaultConnManagerFactory)
@@ -70,19 +55,13 @@ func (o newFactoryOptionFunc) apply(factory *defaultConnManagerFactory) {
 	o(factory)
 }
 
-type subsetterFunc func([]resolver.Address) []resolver.Address
-
-func (f subsetterFunc) ComputeSubset(addrs []resolver.Address) []resolver.Address {
-	return f(addrs)
-}
-
 type defaultConnManagerFactory struct {
-	subsetter Subsetter
+	subsetter subsetter.Subsetter
 }
 
 func (d *defaultConnManagerFactory) applyDefaults() {
 	if d.subsetter == nil {
-		d.subsetter = NoOpSubsetter
+		d.subsetter = subsetter.NoOp
 	}
 }
 
@@ -95,7 +74,7 @@ func (d *defaultConnManagerFactory) New(_ context.Context, _, _ string, updateCo
 }
 
 type defaultConnManager struct {
-	subsetter Subsetter
+	subsetter subsetter.Subsetter
 	updater   ConnUpdater
 	conns     map[string][]conn.Conn
 }
