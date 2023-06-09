@@ -173,7 +173,9 @@ func (h *connHeap) acquire() *connItem {
 
 func (h *connHeap) release(entry *connItem) {
 	entry.load--
-	heap.Fix(h, entry.index)
+	if entry.index != -1 {
+		heap.Fix(h, entry.index)
+	}
 }
 
 func (h connHeap) Len() int { return len(h) }
@@ -193,7 +195,7 @@ func (h connHeap) Swap(i, j int) {
 
 func (h *connHeap) Push(x any) {
 	n := len(*h)
-	item, _ := x.(*connItem)
+	item := x.(*connItem) //nolint:forcetypeassert,errcheck
 	item.index = n
 	*h = append(*h, item)
 }
