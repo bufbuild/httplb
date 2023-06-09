@@ -81,7 +81,11 @@ func (p *powerOfTwo) Pick(*http.Request) (conn conn.Conn, whenDone func(), err e
 
 	entry.load.Add(1)
 	whenDone = func() {
-		entry.load.Add(^(uint64)(0))
+		// Ugly way to decrement atomic.Uint64; still compiles down to atomic
+		// decrement instructions.
+		// https://godbolt.org/z/exr647cMq
+		negativeOne := int64(-1)
+		entry.load.Add(uint64(negativeOne))
 	}
 
 	return entry.conn, whenDone, nil

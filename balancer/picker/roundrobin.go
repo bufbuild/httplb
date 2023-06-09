@@ -50,7 +50,8 @@ func (f roundRobinFactory) New(_ Picker, allConns conn.Connections) Picker {
 		conns[i], conns[j] = conns[j], conns[i]
 	})
 	picker := &roundRobin{conns: conns}
-	picker.counter.Store(^uint64(0))
+	negativeOne := int64(-1)
+	picker.counter.Store(uint64(negativeOne))
 	return picker
 }
 
