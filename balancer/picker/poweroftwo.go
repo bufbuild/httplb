@@ -44,20 +44,21 @@ type powerOfTwoConnItem struct {
 }
 
 func (f powerOfTwoFactory) New(prev Picker, allConns conn.Connections) Picker {
-	loadMap := map[conn.Conn]uint64{}
+	itemMap := map[conn.Conn]*powerOfTwoConnItem{}
 
 	if prev, ok := prev.(*powerOfTwo); ok {
 		for _, entry := range prev.conns {
-			loadMap[entry.conn] = entry.load.Load()
+			itemMap[entry.conn] = entry
 		}
 	}
 
 	newConns := make([]*powerOfTwoConnItem, allConns.Len())
 	for i := range newConns {
 		conn := allConns.Get(i)
-		newConns[i] = &powerOfTwoConnItem{conn: conn}
-		if load, ok := loadMap[conn]; ok {
-			newConns[i].load.Store(load)
+		if item, ok := itemMap[conn]; ok {
+			newConns[i] = item
+		} else {
+			newConns[i] = &powerOfTwoConnItem{conn: conn}
 		}
 	}
 
