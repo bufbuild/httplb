@@ -37,28 +37,39 @@ var (
 
 // FakeConn is an implementation of conn.Conn that can be used for testing.
 // It is not usable for actual request traffic: attempts to call its
-// RoundTrip method will panic.
+// RoundTrip method will always result in error.
 //
 // To create new instances of FakeConn, use a FakeConnPool.
 type FakeConn struct {
 	Index int
 
-	conn.Conn
 	addr atomic.Pointer[resolver.Address]
 }
 
+// Scheme implements the conn.Conn interface. For a FakeConn, it always
+// returns "http".
 func (c *FakeConn) Scheme() string {
 	return "http"
 }
 
+// Address implements the conn.Conn interface. It returns the resolved
+// address associated with this connection.
 func (c *FakeConn) Address() resolver.Address {
 	return *c.addr.Load()
 }
 
+// UpdateAttributes implements the conn.Conn interface. It updates the
+// attributes on this connection's associated address.
 func (c *FakeConn) UpdateAttributes(attributes attrs.Attributes) {
 	addr := c.Address()
 	addr.Attributes = attributes
 	c.addr.Store(&addr)
+}
+
+// RoundTrip implements the conn.Conn interface. For a FakeConn, it
+// always returns an error as a FakeConn is not meant for real requests.
+func (c *FakeConn) RoundTrip(*http.Request, func()) (*http.Response, error) {
+	return nil, errors.New("FakeConn does not support RoundTrip")
 }
 
 // FakeConnPool is an implementation of balancer.ConnPool that can be used
