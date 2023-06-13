@@ -32,19 +32,30 @@ func TestRendezvous(t *testing.T) {
 	addrQux := resolver.Address{HostPort: "qux"}
 	addresses := []resolver.Address{addrFoo, addrBar, addrBaz, addrQux}
 
-	sub := subsetter.NewRendezvous("foo", 2)
+	_, err := subsetter.NewRendezvous(subsetter.RendezvousConfig{})
+	assert.ErrorContains(t, err, "NumBackends must be set")
+
+	sub, err := subsetter.NewRendezvous(subsetter.RendezvousConfig{
+		NumBackends:  2,
+		SelectionKey: "foo",
+	})
+	require.NoError(t, err)
 	assert.Equal(t,
 		[]resolver.Address{addrFoo},
 		sub.ComputeSubset([]resolver.Address{addrFoo}))
 	assert.Equal(t,
 		[]resolver.Address{addrFoo, addrBar},
 		sub.ComputeSubset([]resolver.Address{addrFoo, addrBar}))
-	set1 := sub.ComputeSubset(addresses)
+	set1 := sub.ComputeSubset(append([]resolver.Address{}, addresses...))
 	require.Len(t, set1, 2)
 	assert.Contains(t, addresses, set1[0])
 	assert.Contains(t, addresses, set1[1])
 
-	sub = subsetter.NewRendezvous("bar", 2)
-	set2 := sub.ComputeSubset(addresses)
+	sub, err = subsetter.NewRendezvous(subsetter.RendezvousConfig{
+		NumBackends:  2,
+		SelectionKey: "bar",
+	})
+	require.NoError(t, err)
+	set2 := sub.ComputeSubset(append([]resolver.Address{}, addresses...))
 	assert.NotEqual(t, set1, set2)
 }
