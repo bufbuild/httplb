@@ -59,7 +59,7 @@ func (s HealthState) String() string {
 	case Unknown:
 		return "unknown"
 	default:
-		return fmt.Sprintf("invalid? (%d)", s)
+		return fmt.Sprintf("HealthState(%d)", s)
 	}
 }
 
