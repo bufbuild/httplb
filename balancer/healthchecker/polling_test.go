@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/bufbuild/go-http-balancer/balancer/balancertesting"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
@@ -55,7 +54,7 @@ func TestPollingChecker(t *testing.T) {
 
 	pool := balancertesting.NewFakeConnPool()
 	newConn, _ := pool.NewConn(resolver.Address{})
-	checker := healthchecker.NewPollingChecker(5*time.Second, healthchecker.NewSimpleProber("/"))
+	checker := healthchecker.NewPollingChecker(healthchecker.PollingCheckerConfig{}, healthchecker.NewSimpleProber("/"))
 
 	// Unhealthy (HTTP error)
 	waitGroup := new(sync.WaitGroup)
