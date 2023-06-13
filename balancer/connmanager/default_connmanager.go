@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/subsetter"
+	"github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter"
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
 

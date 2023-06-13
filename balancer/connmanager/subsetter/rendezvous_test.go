@@ -17,7 +17,7 @@ package subsetter_test
 import (
 	"testing"
 
-	"github.com/bufbuild/go-http-balancer/balancer/subsetter"
+	"github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter"
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
