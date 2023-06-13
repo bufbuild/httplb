@@ -201,11 +201,11 @@ func (f proberFunc) Probe(ctx context.Context, conn conn.Conn) HealthState {
 	return f(ctx, conn)
 }
 
-func jitter(d time.Duration, amount float64) time.Duration {
+func jitter(interval time.Duration, amount float64) time.Duration {
 	if amount == 0 {
-		return d
+		return interval
 	}
 
 	// This may lose precision if your interval is longer than ~104 days.
-	return time.Duration(float64(d) * (amount + 1))
+	return time.Duration(float64(interval) * (amount + 1))
 }
