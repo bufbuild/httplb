@@ -17,6 +17,7 @@ package balancertesting
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/attrs"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/connmanager"
+	"github.com/bufbuild/go-http-balancer/balancer/healthchecker"
 	"github.com/bufbuild/go-http-balancer/balancer/picker"
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
@@ -240,6 +242,183 @@ type fakePickerFactory struct{}
 
 func (f fakePickerFactory) New(_ picker.Picker, allConns conn.Connections) picker.Picker {
 	return NewFakePicker(allConns)
+}
+
+// ConnHealth is map that tracks the health state of connections.
+type ConnHealth map[conn.Conn]healthchecker.HealthState
+
+func (ch ConnHealth) AsSet() conn.Set {
+	set := make(conn.Set, len(ch))
+	for k := range ch {
+		set[k] = struct{}{}
+	}
+	return set
+}
+
+// FakeHealthChecker is an implementation of healthchecker.Checker that can be
+// used for testing balancer.Balancer implementations. It tracks the connections
+// for which check processes are active (created with New but not closed). By
+// default, all connections will be immediately healthy, but SetInitialState
+// can be used to change that.
+//
+// See NewFakeHealthChecker.
+type FakeHealthChecker struct {
+	checkersUpdated chan struct{}
+	mu              sync.Mutex
+	// +checklocks:mu
+	initialState healthchecker.HealthState
+	// +checklocks:mu
+	trackers map[conn.Conn]healthchecker.HealthTracker
+	// +checklocks:mu
+	initialized map[conn.Conn]chan struct{}
+	// +checklocks:mu
+	conns ConnHealth
+}
+
+// NewFakeHealthChecker creates a new FakeHealthChecker.
+func NewFakeHealthChecker() *FakeHealthChecker {
+	return &FakeHealthChecker{
+		checkersUpdated: make(chan struct{}, 1),
+		initialState:    healthchecker.Healthy,
+		trackers:        map[conn.Conn]healthchecker.HealthTracker{},
+		initialized:     map[conn.Conn]chan struct{}{},
+		conns:           ConnHealth{},
+	}
+}
+
+// New implements the healthchecker.Checker interface. It will use the
+// given tracker to mark the given connection with the currently configured
+// initial health state (which defaults to health).
+func (hc *FakeHealthChecker) New(_ context.Context, connection conn.Conn, tracker healthchecker.HealthTracker) io.Closer {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	state := hc.initialState
+	hc.conns[connection] = state
+	hc.trackers[connection] = tracker
+	hc.initialized[connection] = make(chan struct{})
+	go func() {
+		tracker.UpdateHealthState(connection, state)
+		hc.mu.Lock()
+		defer hc.mu.Unlock()
+		if ch := hc.initialized[connection]; ch != nil {
+			close(ch)
+		}
+	}()
+	select {
+	case hc.checkersUpdated <- struct{}{}:
+	default:
+	}
+	return closerFunc(func() error {
+		hc.mu.Lock()
+		delete(hc.conns, connection)
+		delete(hc.trackers, connection)
+		delete(hc.initialized, connection)
+		hc.mu.Unlock()
+		select {
+		case hc.checkersUpdated <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+}
+
+// UpdateHealthState allows the state of a connection to be changed.
+func (hc *FakeHealthChecker) UpdateHealthState(connection conn.Conn, state healthchecker.HealthState) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	hc.trackers[connection].UpdateHealthState(connection, state)
+	hc.conns[connection] = state
+}
+
+// SetInitialState sets the state that new connections will be put into
+// in subsequent calls to New.
+func (hc *FakeHealthChecker) SetInitialState(state healthchecker.HealthState) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	hc.initialState = state
+}
+
+// SnapshotConns returns a snapshot of active connections and their latest health state.
+func (hc *FakeHealthChecker) SnapshotConns() ConnHealth {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	snapshot := ConnHealth{}
+	for k, v := range hc.conns {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+// AwaitCheckerUpdate waits for the set of checked connections to change. This will
+// return after a call to New or after a process is closed. It may return immediately
+// if there was a past call to New or to a process's Close that has yet to be
+// acknowledged via a call to this method. It returns a snapshot of the connections
+// and their latest health state on success. It returns an error if the given context
+// is cancelled or times out before any connection checks are created or closed.
+func (hc *FakeHealthChecker) AwaitCheckerUpdate(ctx context.Context) (ConnHealth, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-hc.checkersUpdated:
+		return hc.SnapshotConns(), nil
+	}
+}
+
+// AwaitConnectionInitialized waits for given connection's initial health state to be
+// set. It will return immediately if the given connection is not known to this checker
+// (which can happen if the connection's health check process has already been closed).
+// It returns a snapshot of the connection's state on success. It returns an error if
+// the given context is cancelled or times out before the connection's state is
+// initialized.
+func (hc *FakeHealthChecker) AwaitConnectionInitialized(ctx context.Context, connection conn.Conn) (healthchecker.HealthState, error) {
+	hc.mu.Lock()
+	initializedChan := hc.initialized[connection]
+	hc.mu.Unlock()
+	if initializedChan == nil {
+		return healthchecker.Unhealthy, nil
+	}
+	select {
+	case <-ctx.Done():
+		return healthchecker.Unknown, ctx.Err()
+	case <-initializedChan:
+		hc.mu.Lock()
+		state := hc.conns[connection]
+		hc.mu.Unlock()
+		return state, nil
+	}
+}
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error {
+	return f()
+}
+
+// SwappableUsabilityOracle is a usability oracle whose underlying function
+// can be changed on the fly.
+type SwappableUsabilityOracle struct {
+	actual atomic.Pointer[healthchecker.UsabilityOracle]
+}
+
+// Do provides the UsabilityOracle signature. Wherever a healthchecker.UsabilityOracle
+// is called for, you can pass SwappableUsabilityOracle.Do.
+func (o *SwappableUsabilityOracle) Do(conns conn.Connections, state func(conn.Conn) healthchecker.HealthState) []conn.Conn {
+	ptr := o.actual.Load()
+	if ptr == nil {
+		// no oracle set? just treat everything as usable
+		connSlice := make([]conn.Conn, conns.Len())
+		for i := 0; i < conns.Len(); i++ {
+			connSlice[i] = conns.Get(i)
+		}
+		return connSlice
+	}
+	return (*ptr)(conns, state)
+}
+
+// Set sets the implementation used by calls to Do. If this is never called, the
+// default implementation treats *all* connections as usable, regardless of state.
+func (o *SwappableUsabilityOracle) Set(oracle healthchecker.UsabilityOracle) {
+	o.actual.Store(&oracle)
 }
 
 // DeterministicConnManagerFactory attempts to make ConnManager's that will result in

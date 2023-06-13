@@ -299,7 +299,14 @@ func (b *defaultBalancer) updateConns(newAddrs []resolver.Address, removeConns [
 	newConns := make([]conn.Conn, 0, len(b.conns)+numAdded-numRemoved)
 	for _, existing := range b.conns {
 		if _, ok := setToRemove[existing]; ok {
-			break
+			// close health check process for this connection
+			// and omit it from newConns
+			closer := b.health[existing].closeChecker
+			delete(b.health, existing)
+			if closer != nil {
+				_ = closer.Close()
+			}
+			continue
 		}
 		newConns = append(newConns, existing)
 	}
