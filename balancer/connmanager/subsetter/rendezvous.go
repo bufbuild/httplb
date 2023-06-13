@@ -50,7 +50,7 @@ func (s *rendezvousSubsetter) ComputeSubset(addrs []resolver.Address) []resolver
 	}
 
 	n, k := len(addrs), s.k
-	addrHeap := newAddressHeap(append([]resolver.Address{}, addrs[:k]...), s.key)
+	addrHeap := newAddressHeap(addrs[:s.k], s.key, s.hash)
 	for i := k; i < n; i++ {
 		rank := addrHeap.rank(addrs[i])
 		if rank > addrHeap.ranks[0] {
