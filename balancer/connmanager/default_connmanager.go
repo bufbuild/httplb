@@ -57,10 +57,22 @@ func WithSubsetter(subsetter Subsetter) NewFactoryOption {
 	})
 }
 
+// Subsetter represents logic to compute a static subset of resolve addresses.
+// To avoid creating N^2 connections, which happens if a client connects to all
+// resolved addresses and can waste resources (and even risk exhausting file
+// handles in extreme cases), the Subsetter computes a smaller (often fixed)
+// number of addresses to use.
+//
+// This interface does not support more sophisticated subsetting, like dynamic
+// subsets that can change over time based on near-real-time load information
+// about a target service. For that, one must implement ConnManager directly.
 type Subsetter interface {
 	// ComputeSubset returns a static subset of the given addresses. It is
 	// allowed to return duplicates, if it wants to return more addresses than
 	// are actually given.
+	//
+	// The given slice is not shared, so it is safe for the subsetter to mutate
+	// it.
 	ComputeSubset([]resolver.Address) []resolver.Address
 }
 
@@ -108,7 +120,7 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 	var toRemove []conn.Conn
 	// We allow subsetter to select the same address more than once. So
 	// partition addresses by hostPort, to make reconciliation below easier.
-	desired := make(map[string][]resolver.Address, len(addresses))
+	desired := make(map[string][]resolver.Address, len(subset))
 	for _, addr := range subset {
 		desired[addr.HostPort] = append(desired[addr.HostPort], addr)
 	}

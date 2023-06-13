@@ -31,13 +31,13 @@ import (
 
 func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
+	connMgrFactory, activeConnMgrs := balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())
 	factory := NewFactory(
-		WithConnManager(balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())),
+		WithConnManager(connMgrFactory),
 		WithPicker(balancertesting.FakePickerFactory),
 	)
 	pool := balancertesting.NewFakeConnPool()
 	balancer := factory.New(context.Background(), "http", "foo.com", pool)
-
 	// Initial resolve
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
@@ -92,14 +92,19 @@ func TestDefaultBalancer_BasicConnManagement(t *testing.T) {
 
 	// Also make sure the set of all conns (not just ones that the picker sees) arrives at the right state
 	awaitConns(t, pool, addrs, []int{1, 2, 7, 8})
+
+	err := balancer.Close()
+	require.NoError(t, err)
+	require.Zero(t, activeConnMgrs())
 }
 
 func TestDefaultBalancer_HealthChecking(t *testing.T) {
 	t.Parallel()
+	connMgrFactory, activeConnMgrs := balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())
 	checker := balancertesting.NewFakeHealthChecker()
 	var oracle balancertesting.SwappableUsabilityOracle
 	factory := NewFactory(
-		WithConnManager(balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())),
+		WithConnManager(connMgrFactory),
 		WithPicker(balancertesting.FakePickerFactory),
 		WithHealthChecks(checker, oracle.Do),
 	)
@@ -121,10 +126,10 @@ func TestDefaultBalancer_HealthChecking(t *testing.T) {
 	awaitPickerUpdate(t, pool, false, nil, nil)
 
 	conns := pool.SnapshotConns()
-	conn1 := getConn(conns, addrs[0], 1)
-	conn2 := getConn(conns, addrs[1], 2)
-	conn3 := getConn(conns, addrs[2], 3)
-	conn4 := getConn(conns, addrs[3], 4)
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
 	checker.UpdateHealthState(conn1, healthchecker.Healthy)
 	awaitPickerUpdate(t, pool, true, addrs[:1], []int{1})
 	checker.UpdateHealthState(conn2, healthchecker.Healthy)
@@ -195,19 +200,12 @@ func TestDefaultBalancer_HealthChecking(t *testing.T) {
 		{HostPort: "1.2.3.20"},
 	}
 	awaitPickerUpdate(t, pool, true, expectAddrs, []int{1, 2, 7})
-}
 
-func getConn(set conn.Set, addr resolver.Address, index int) conn.Conn {
-	for connection := range set {
-		fakeConn, ok := connection.(*balancertesting.FakeConn)
-		if !ok {
-			continue
-		}
-		if reflect.DeepEqual(fakeConn.Address(), addr) && fakeConn.Index == index {
-			return connection
-		}
-	}
-	return nil
+	err := balancer.Close()
+	require.NoError(t, err)
+	checkers := checker.SnapshotConns()
+	require.Empty(t, checkers)
+	require.Zero(t, activeConnMgrs())
 }
 
 func awaitPickerUpdate(t *testing.T, pool *balancertesting.FakeConnPool, warm bool, addrs []resolver.Address, indexes []int) {

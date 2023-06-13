@@ -50,6 +50,9 @@ type ConnManager interface {
 	// this concurrently. So if the ConnManager implementation does not need to
 	// create other goroutines, the data structures it uses in this method do not
 	// need to be thread-safe.
+	//
+	// The given slice and its backing array are not shared. So it is okay for
+	// the connection manager to mutate it.
 	ReconcileAddresses([]resolver.Address)
 	// Close releases all resources (including stopping background goroutines if
 	// any). All resources should be freed when this method returns.
