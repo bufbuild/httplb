@@ -19,8 +19,10 @@ import "github.com/bufbuild/go-http-balancer/resolver"
 type Subsetter interface {
 	// ComputeSubset returns a static subset of the given addresses. It is
 	// allowed to return duplicates, if it wants to return more addresses than
-	// are actually given. This method may mutate the slice passed to it, and
-	// the returned slice may be a slice of the passed slice.
+	// are actually given.
+	//
+	// The given slice is not shared, so it is safe for the subsetter to mutate
+	// it.
 	ComputeSubset([]resolver.Address) []resolver.Address
 }
 

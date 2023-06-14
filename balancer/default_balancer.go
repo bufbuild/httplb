@@ -264,7 +264,9 @@ func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 			//       should we respect it, and potentially close all connections?
 			//       For now, we ignore the update, and keep the last known addresses.
 			if len(*addrs) > 0 {
-				b.connManager.ReconcileAddresses(append([]resolver.Address{}, *addrs...))
+				addrsClone := make([]resolver.Address, len(*addrs))
+				copy(addrsClone, *addrs)
+				b.connManager.ReconcileAddresses(addrsClone)
 			}
 		}
 	}
