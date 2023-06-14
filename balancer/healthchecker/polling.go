@@ -66,16 +66,19 @@ type PollingCheckerConfig struct {
 	Timeout time.Duration
 
 	// HealthyThreshold specifies the number of successful health checks needed
-	// to promote an unhealthy or degraded backend to healthy. A connection will
-	// initially be in the unknown state, and thus will be considered healthy or
-	// unhealthy after the first valid result regardless of this setting.
+	// to promote an unhealthy, degraded or unknown backend to healthy. Backends
+	// start in unknown, so this many successful health checks are required
+	// before the connection will be considered healthy.
+	//
 	// Defaults to 1.
 	HealthyThreshold int
 
 	// UnhealthyThreshold specifies the number of failed health checks needed to
-	// demote a healthy connection to unhealthy. Setting this to larger than one
-	// can reduce flapping. If configured to two, for example, a healthy backend
-	// is only demoted to unhealthy after two unhealthy probe results in a row.
+	// demote a healthy connection to unhealthy, degraded, or unknown. This can
+	// reduce flapping: Setting this value to two would prevent a single
+	// spurious health-check failure from causing a connection to be marked as
+	// unhealthy.
+	//
 	// Defaults to 1.
 	UnhealthyThreshold int
 }
@@ -161,21 +164,21 @@ func (r *pollingChecker) New(
 
 			lastState := state
 			switch {
-			case result == Healthy && (state == Unhealthy || state == Degraded):
+			case result == Healthy && (state == Unhealthy || state == Degraded || state == Unknown):
 				counter++
 				if counter >= r.healthyThreshold {
 					state = result
 					counter = 0
 				}
 
-			case state == Healthy && (result == Unhealthy || result == Degraded):
+			case state == Healthy && (result == Unhealthy || result == Degraded || result == Unknown):
 				counter++
 				if counter >= r.unhealthyThreshold {
 					state = result
 					counter = 0
 				}
 
-			case result != Unknown:
+			default:
 				state = result
 				counter = 0
 			}
