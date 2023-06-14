@@ -62,7 +62,7 @@ func TestPollingChecker(t *testing.T) {
 	process := checker.New(
 		context.Background(),
 		newConn,
-		expectHealth(t, healthchecker.HealthStateUnhealthy, waitGroup.Done),
+		expectHealth(t, healthchecker.Unhealthy, waitGroup.Done),
 	)
 	waitGroup.Wait()
 	process.Close()
@@ -74,7 +74,7 @@ func TestPollingChecker(t *testing.T) {
 	process = checker.New(
 		context.Background(),
 		&fakeConn{Conn: newConn, response: response},
-		expectHealth(t, healthchecker.HealthStateUnhealthy, waitGroup.Done),
+		expectHealth(t, healthchecker.Unhealthy, waitGroup.Done),
 	)
 	waitGroup.Wait()
 	process.Close()
@@ -86,7 +86,7 @@ func TestPollingChecker(t *testing.T) {
 	process = checker.New(
 		context.Background(),
 		&fakeConn{Conn: newConn, response: response},
-		expectHealth(t, healthchecker.HealthStateHealthy, waitGroup.Done),
+		expectHealth(t, healthchecker.Healthy, waitGroup.Done),
 	)
 	waitGroup.Wait()
 	process.Close()

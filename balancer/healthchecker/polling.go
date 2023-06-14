@@ -118,17 +118,17 @@ func NewSimpleProber(path string) Prober {
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), http.NoBody)
 		if err != nil {
-			return HealthStateUnknown
+			return Unknown
 		}
 		resp, err := conn.RoundTrip(req, nil)
 		if err != nil {
-			return HealthStateUnhealthy
+			return Unhealthy
 		}
 		resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return HealthStateUnhealthy
+			return Unhealthy
 		}
-		return HealthStateHealthy
+		return Healthy
 	})
 }
 
@@ -143,7 +143,7 @@ func (r *pollingChecker) New(
 		doneSignal: make(chan struct{}),
 	}
 
-	state := HealthStateUnknown
+	state := Unknown
 	counter := 0
 
 	go func() {
@@ -161,21 +161,21 @@ func (r *pollingChecker) New(
 
 			lastState := state
 			switch {
-			case result == HealthStateHealthy && (state == HealthStateUnhealthy || state == HealthStateDegraded):
+			case result == Healthy && (state == Unhealthy || state == Degraded):
 				counter++
 				if counter >= r.healthyThreshold {
 					state = result
 					counter = 0
 				}
 
-			case state == HealthStateHealthy && (result == HealthStateUnhealthy || result == HealthStateDegraded):
+			case state == Healthy && (result == Unhealthy || result == Degraded):
 				counter++
 				if counter >= r.unhealthyThreshold {
 					state = result
 					counter = 0
 				}
 
-			case result != HealthStateUnknown:
+			case result != Unknown:
 				state = result
 				counter = 0
 			}
