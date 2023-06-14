@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -429,20 +430,99 @@ func (o *SwappableUsabilityOracle) Set(oracle healthchecker.UsabilityOracle) {
 // addresses provided by the ConnManager.) Combined with a FakeConnPool, which stamps
 // an index onto each FakeConn it creates, this can be used to make certain kinds of
 // assertions about connection management simpler and deterministic.
-func DeterministicConnManagerFactory(factory connmanager.Factory) connmanager.Factory {
-	return deterministicConnManagerFactory{factory}
+//
+// The returned function can be used to verify if ConnManager instances created with
+// the returned factory have been closed. The function returns the number of active
+// ConnManager instances, zero if they have all been closed.
+func DeterministicConnManagerFactory(factory connmanager.Factory) (result connmanager.Factory, activeCount func() int) {
+	deterministicFactory := &deterministicConnManagerFactory{Factory: factory}
+	return deterministicFactory, func() int {
+		return int(deterministicFactory.active.Load())
+	}
 }
 
 type deterministicConnManagerFactory struct {
 	connmanager.Factory
+	// +checkatomic
+	active atomic.Int32
 }
 
-func (f deterministicConnManagerFactory) New(ctx context.Context, scheme, hostPort string, updateConns connmanager.ConnUpdater) connmanager.ConnManager {
-	return f.Factory.New(ctx, scheme, hostPort, func(newAddrs []resolver.Address, removeConns []conn.Conn) (added []conn.Conn) {
+func (f *deterministicConnManagerFactory) New(ctx context.Context, scheme, hostPort string, updateConns connmanager.ConnUpdater) connmanager.ConnManager {
+	f.active.Add(1)
+	connMgr := f.Factory.New(ctx, scheme, hostPort, func(newAddrs []resolver.Address, removeConns []conn.Conn) (added []conn.Conn) {
 		// sort new addresses, so they get created in deterministic order according to address test
 		sort.Slice(newAddrs, func(i, j int) bool {
 			return newAddrs[i].HostPort < newAddrs[j].HostPort
 		})
+		// also sort remove conns
+		sort.Slice(removeConns, func(i, j int) bool { //nolint:varnamelen // i and j are fine
+			if removeConns[i].Address().HostPort == removeConns[j].Address().HostPort {
+				iconn, iok := removeConns[i].(*FakeConn)
+				jconn, jok := removeConns[j].(*FakeConn)
+				if iok && jok {
+					return iconn.Index < jconn.Index
+				}
+			}
+			return removeConns[i].Address().HostPort < removeConns[j].Address().HostPort
+		})
 		return updateConns(newAddrs, removeConns)
 	})
+	return closeTrackingConnManager{
+		ConnManager: connMgr,
+		onClose: func() {
+			f.active.Add(-1)
+		},
+	}
+}
+
+type closeTrackingConnManager struct {
+	connmanager.ConnManager
+	onClose func()
+}
+
+func (c closeTrackingConnManager) Close() error {
+	err := c.ConnManager.Close()
+	c.onClose()
+	return err
+}
+
+// SubsetFunc is a function whose signature matches the Subsetter.ComputeSubset
+// method.
+type SubsetFunc func([]resolver.Address) []resolver.Address
+
+// SwappableSubsetter is a subsetter whose underlying implementation
+// can be changed on the fly.
+type SwappableSubsetter struct {
+	actual atomic.Pointer[SubsetFunc]
+}
+
+// ComputeSubset implements the Subsetter interface. This delegates to the current
+// implementation. If no implementation has been [Set], this defaults to the
+// implementation provided by connmanager.NoOpSubsetter.
+func (s *SwappableSubsetter) ComputeSubset(addrs []resolver.Address) []resolver.Address {
+	fn := s.actual.Load()
+	if fn == nil {
+		return connmanager.NoOpSubsetter.ComputeSubset(addrs)
+	}
+	return (*fn)(addrs)
+}
+
+// Set sets the current implementation of s to the given function.
+func (s *SwappableSubsetter) Set(fn SubsetFunc) {
+	s.actual.Store(&fn)
+}
+
+// FindConn finds the connection with the given address and index in the given conn.Set.
+// returns nil if no such connection can be found.
+func FindConn(set conn.Set, addr resolver.Address, index int) conn.Conn {
+	for connection := range set {
+		fakeConn, ok := connection.(*FakeConn)
+		if !ok {
+			continue
+		}
+		if reflect.DeepEqual(fakeConn.Address(), addr) && fakeConn.Index == index {
+			return connection
+		}
+	}
+	return nil
 }
