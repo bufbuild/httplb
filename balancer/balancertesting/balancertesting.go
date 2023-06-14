@@ -27,6 +27,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/attrs"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/connmanager"
+	"github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter"
 	"github.com/bufbuild/go-http-balancer/balancer/healthchecker"
 	"github.com/bufbuild/go-http-balancer/balancer/picker"
 	"github.com/bufbuild/go-http-balancer/resolver"
@@ -502,7 +503,7 @@ type SwappableSubsetter struct {
 func (s *SwappableSubsetter) ComputeSubset(addrs []resolver.Address) []resolver.Address {
 	fn := s.actual.Load()
 	if fn == nil {
-		return connmanager.NoOpSubsetter.ComputeSubset(addrs)
+		return subsetter.NoOp.ComputeSubset(addrs)
 	}
 	return (*fn)(addrs)
 }
