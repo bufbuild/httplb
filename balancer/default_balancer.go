@@ -211,23 +211,30 @@ func (b *defaultBalancer) Close() error {
 
 func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 	defer func() {
-		// Shutdown health check process on the way out.
+		// Shutdown conn manager and health check process on the way out.
 		grp, _ := errgroup.WithContext(context.Background())
 		var closeErr atomic.Pointer[error]
+		doClose := func(closer io.Closer) func() error {
+			return func() error {
+				if err := closer.Close(); err != nil {
+					// We don't return an error since that would cancel all
+					// of the other outstanding close tasks. We don't really
+					// need to track all of the errors may happen, so we'll
+					// just keep track of the last one.
+					closeErr.CompareAndSwap(nil, &err)
+				}
+				return nil
+			}
+		}
 		func() {
 			b.mu.Lock()
 			defer b.mu.Unlock()
+			grp.Go(doClose(b.connManager))
 			for key, health := range b.health {
 				delete(b.health, key)
 				closer := health.closeChecker
 				if closer != nil {
-					grp.Go(func() error {
-						if err := closer.Close(); err != nil {
-							// we'll just retain the first error encountered
-							closeErr.CompareAndSwap(nil, &err)
-						}
-						return nil
-					})
+					grp.Go(doClose(closer))
 				}
 			}
 		}()
@@ -301,7 +308,14 @@ func (b *defaultBalancer) updateConns(newAddrs []resolver.Address, removeConns [
 	newConns := make([]conn.Conn, 0, len(b.conns)+numAdded-numRemoved)
 	for _, existing := range b.conns {
 		if _, ok := setToRemove[existing]; ok {
-			break
+			// close health check process for this connection
+			// and omit it from newConns
+			closer := b.health[existing].closeChecker
+			delete(b.health, existing)
+			if closer != nil {
+				_ = closer.Close()
+			}
+			continue
 		}
 		newConns = append(newConns, existing)
 	}

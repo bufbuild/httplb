@@ -87,7 +87,7 @@ func (d *defaultConnManager) ReconcileAddresses(addresses []resolver.Address) {
 	var toRemove []conn.Conn
 	// We allow subsetter to select the same address more than once. So
 	// partition addresses by hostPort, to make reconciliation below easier.
-	desired := make(map[string][]resolver.Address, len(addresses))
+	desired := make(map[string][]resolver.Address, len(subset))
 	for _, addr := range subset {
 		desired[addr.HostPort] = append(desired[addr.HostPort], addr)
 	}
