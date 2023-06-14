@@ -17,22 +17,25 @@ package healthchecker
 import (
 	"context"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/go-http-balancer/balancer/internal"
 )
 
 type pollingChecker struct {
-	interval time.Duration
-	jitter   float64
-	timeout  time.Duration
+	interval     time.Duration
+	scaledJitter float64
+	timeout      time.Duration
 
 	unhealthyThreshold int
 	healthyThreshold   int
 
 	prober Prober
+	rnd    *rand.Rand
 }
 
 type pollingCheckerTask struct {
@@ -94,11 +97,12 @@ func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
 	}
 	return &pollingChecker{
 		interval:           config.PollingInterval,
-		jitter:             config.Jitter,
+		scaledJitter:       config.Jitter * float64(config.PollingInterval),
 		timeout:            config.Timeout,
 		healthyThreshold:   config.HealthyThreshold,
 		unhealthyThreshold: config.UnhealthyThreshold,
 		prober:             prober,
+		rnd:                internal.NewLockedRand(),
 	}
 }
 
@@ -146,7 +150,7 @@ func (r *pollingChecker) New(
 		defer close(task.doneSignal)
 		defer cancel()
 
-		ticker := time.NewTicker(jitter(r.interval, r.jitter))
+		ticker := time.NewTicker(r.calcJitter(r.interval))
 		defer ticker.Stop()
 
 		for {
@@ -184,11 +188,20 @@ func (r *pollingChecker) New(
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ticker.Reset(jitter(r.interval, r.jitter))
+				ticker.Reset(r.calcJitter(r.interval))
 			}
 		}
 	}()
 	return task
+}
+
+func (r *pollingChecker) calcJitter(interval time.Duration) time.Duration {
+	if r.scaledJitter == 0 {
+		return interval
+	}
+
+	// This may lose precision if your interval is longer than ~104 days.
+	return time.Duration(float64(interval) + ((r.rnd.Float64()*2 - 1) * r.scaledJitter))
 }
 
 func (t *pollingCheckerTask) Close() error {
@@ -199,13 +212,4 @@ func (t *pollingCheckerTask) Close() error {
 
 func (f proberFunc) Probe(ctx context.Context, conn conn.Conn) HealthState {
 	return f(ctx, conn)
-}
-
-func jitter(interval time.Duration, amount float64) time.Duration {
-	if amount == 0 {
-		return interval
-	}
-
-	// This may lose precision if your interval is longer than ~104 days.
-	return time.Duration(float64(interval) * (amount + 1))
 }
