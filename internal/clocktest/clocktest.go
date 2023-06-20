@@ -31,6 +31,9 @@ import (
 	"github.com/jonboulle/clockwork"
 )
 
+// FakeClock provides an interface for a clock which can be manually advanced
+// through time. For more information, see the documentation for Clockwork.
+// https://pkg.go.dev/github.com/jonboulle/clockwork
 type FakeClock interface {
 	clock.Clock
 	Advance(d time.Duration)
@@ -54,20 +57,35 @@ func NewFakeClockAt(t time.Time) FakeClock {
 	return fakeClock{clockwork.NewFakeClockAt(t).(clockworkFakeClock)} //nolint:forcetypeassert
 }
 
+// fakeClock wraps the clockwork.FakeClock interface and adapts it to the
+// clock.Clock/FakeClock interface. It has two purposes:
+//   - To expose BlockUntilContext, which is not exposed in clockwork.FakeClock
+//   - To adapt the return types of clockwork.Clock methods that return other
+//     interfaces. These function signatures are not compatible by Go rules,
+//     even though structurally the underlying interfaces are identical.
 type fakeClock struct {
 	clockworkFakeClock
 }
 
 var _ FakeClock = fakeClock{nil}
 
+// NewTicker implements clock.Clock by re-boxing the clockwork.Ticker returned
+// by clockwork.Clock.NewTicker as a clock.Ticker. See package comment for more
+// information on why this is necessary.
 func (f fakeClock) NewTicker(d time.Duration) clock.Ticker {
 	return f.clockworkFakeClock.NewTicker(d)
 }
 
+// NewTimer implements clock.Clock by re-boxing the clockwork.Timer returned by
+// clockwork.Clock.NewTimer as a clock.Timer. See package comment for more
+// information on why this is necessary.
 func (f fakeClock) NewTimer(d time.Duration) clock.Timer {
 	return f.clockworkFakeClock.NewTimer(d)
 }
 
+// AfterFunc implements clock.Clock by re-boxing the clockwork.Timer returned by
+// clockwork.Clock.AfterFunc as a clock.Timer. See package comment for more
+// information on why this is necessary.
 func (f fakeClock) AfterFunc(d time.Duration, fn func()) clock.Timer {
 	return f.clockworkFakeClock.AfterFunc(d, fn)
 }
