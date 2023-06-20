@@ -12,25 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package picker
+package clocktest
 
 import (
-	"net/http"
+	"testing"
+	"time"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/internal"
 )
 
-//nolint:gochecknoglobals
-var (
-	RandomFactory Factory = &randomFactory{}
-)
+func TestNewFakeClock(t *testing.T) {
+	t.Parallel()
 
-type randomFactory struct{}
+	// The purpose of this test is to make it obvious if the type assertion
+	// in NewFakeClock()/NewFakeClockAt() ever breaks.
 
-func (r randomFactory) New(_ Picker, allConns conn.Connections) Picker {
-	rnd := internal.NewLockedRand()
-	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-		return allConns.Get(rnd.Intn(allConns.Len())), nil, nil
-	})
+	var _ internal.Clock = NewFakeClock()
+	var _ internal.Clock = NewFakeClockAt(time.Now())
 }

@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/internal"
+	"github.com/bufbuild/go-http-balancer/internal"
 )
 
 //nolint:gochecknoglobals

@@ -31,6 +31,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/balancer"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/picker"
+	"github.com/bufbuild/go-http-balancer/internal"
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"golang.org/x/sync/errgroup"
 )
@@ -66,6 +67,7 @@ type mainTransport struct {
 	cancel               context.CancelFunc
 	idleTransportTimeout time.Duration
 	clientOptions        *clientOptions
+	clock                internal.Clock
 
 	runningPools sync.WaitGroup
 
@@ -83,6 +85,7 @@ func newTransport(opts *clientOptions) *mainTransport {
 		rootCtx:              ctx,
 		cancel:               cancel,
 		clientOptions:        opts,
+		clock:                internal.NewRealClock(),
 		idleTransportTimeout: opts.idleTransportTimeout,
 		pools:                map[target]transportPoolEntry{},
 	}
@@ -244,11 +247,11 @@ func (m *mainTransport) getPoolLocked(dest target) *transportPool {
 }
 
 func (m *mainTransport) closeWhenIdle(ctx context.Context, dest target, pool *transportPool, activity <-chan struct{}) {
-	timer := time.NewTimer(m.idleTransportTimeout)
+	timer := m.clock.NewTimer(m.idleTransportTimeout)
 	defer timer.Stop()
 	for {
 		select {
-		case <-timer.C:
+		case <-timer.Chan():
 			if m.tryRemovePool(dest, activity) {
 				pool.close()
 				return
