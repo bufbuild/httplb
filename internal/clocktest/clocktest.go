@@ -31,8 +31,6 @@ import (
 	"github.com/jonboulle/clockwork"
 )
 
-var _ = clock.Clock(FakeClock(fakeClock{nil}))
-
 type FakeClock interface {
 	clock.Clock
 	Advance(d time.Duration)
@@ -59,6 +57,8 @@ func NewFakeClockAt(t time.Time) FakeClock {
 type fakeClock struct {
 	ClockworkFakeClock
 }
+
+var _ FakeClock = fakeClock{nil}
 
 func (f fakeClock) NewTicker(d time.Duration) clock.Ticker {
 	return f.ClockworkFakeClock.NewTicker(d)
