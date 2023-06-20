@@ -42,8 +42,6 @@ type Timer interface {
 }
 
 type realClock struct{}
-type realTicker struct{ *time.Ticker }
-type realTimer struct{ *time.Timer }
 
 func NewRealClock() Clock {
 	return realClock{}
@@ -77,9 +75,13 @@ func (realClock) AfterFunc(d time.Duration, f func()) Timer {
 	return realTimer{time.AfterFunc(d, f)}
 }
 
+type realTicker struct{ *time.Ticker }
+
 func (r realTicker) Chan() <-chan time.Time {
 	return r.C
 }
+
+type realTimer struct{ *time.Timer }
 
 func (r realTimer) Chan() <-chan time.Time {
 	return r.C
