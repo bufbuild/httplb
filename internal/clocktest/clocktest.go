@@ -38,36 +38,36 @@ type FakeClock interface {
 	BlockUntilContext(ctx context.Context, n int) error
 }
 
-type ClockworkFakeClock interface {
+type clockworkFakeClock interface {
 	clockwork.FakeClock
 	BlockUntilContext(ctx context.Context, n int) error
 }
 
 // NewFakeClock creates a new FakeClock using Clockwork.
 func NewFakeClock() FakeClock {
-	return fakeClock{clockwork.NewFakeClock().(ClockworkFakeClock)} //nolint:forcetypeassert
+	return fakeClock{clockwork.NewFakeClock().(clockworkFakeClock)} //nolint:forcetypeassert
 }
 
 // NewFakeClockAt creates a new FakeClock using Clockwork set to a specific
 // time, to provide fully deterministic clock behavior.
 func NewFakeClockAt(t time.Time) FakeClock {
-	return fakeClock{clockwork.NewFakeClockAt(t).(ClockworkFakeClock)} //nolint:forcetypeassert
+	return fakeClock{clockwork.NewFakeClockAt(t).(clockworkFakeClock)} //nolint:forcetypeassert
 }
 
 type fakeClock struct {
-	ClockworkFakeClock
+	clockworkFakeClock
 }
 
 var _ FakeClock = fakeClock{nil}
 
 func (f fakeClock) NewTicker(d time.Duration) clock.Ticker {
-	return f.ClockworkFakeClock.NewTicker(d)
+	return f.clockworkFakeClock.NewTicker(d)
 }
 
 func (f fakeClock) NewTimer(d time.Duration) clock.Timer {
-	return f.ClockworkFakeClock.NewTimer(d)
+	return f.clockworkFakeClock.NewTimer(d)
 }
 
 func (f fakeClock) AfterFunc(d time.Duration, fn func()) clock.Timer {
-	return f.ClockworkFakeClock.AfterFunc(d, fn)
+	return f.clockworkFakeClock.AfterFunc(d, fn)
 }
