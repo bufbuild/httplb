@@ -24,6 +24,7 @@ import (
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/internal"
+	"github.com/bufbuild/go-http-balancer/internal/clock"
 )
 
 type pollingChecker struct {
@@ -36,6 +37,7 @@ type pollingChecker struct {
 
 	prober Prober
 	rnd    *rand.Rand
+	clock  clock.Clock
 }
 
 type pollingCheckerTask struct {
@@ -106,6 +108,7 @@ func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
 		unhealthyThreshold: config.UnhealthyThreshold,
 		prober:             prober,
 		rnd:                internal.NewLockedRand(),
+		clock:              clock.NewRealClock(),
 	}
 }
 
@@ -153,7 +156,7 @@ func (r *pollingChecker) New(
 		defer close(task.doneSignal)
 		defer cancel()
 
-		ticker := time.NewTicker(r.calcJitter(r.interval))
+		ticker := r.clock.NewTicker(r.calcJitter(r.interval))
 		defer ticker.Stop()
 
 		for {
@@ -190,7 +193,7 @@ func (r *pollingChecker) New(
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.Chan():
 				ticker.Reset(r.calcJitter(r.interval))
 			}
 		}
