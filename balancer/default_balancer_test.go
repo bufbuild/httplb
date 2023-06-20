@@ -300,7 +300,7 @@ func connStatesFromSnapshot(snapshot conn.Set) map[connState]attrs.Attributes {
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*balancertesting.FakeConn).Index, //nolint:forcetypeassert
+			index:    c.(*balancertesting.FakeConn).Index,
 		}] = c.Address().Attributes
 	}
 	return got
@@ -311,7 +311,7 @@ func connStatesFromHealthSnapshot(snapshot balancertesting.ConnHealth) map[connS
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*balancertesting.FakeConn).Index, //nolint:forcetypeassert
+			index:    c.(*balancertesting.FakeConn).Index,
 		}] = c.Address().Attributes
 	}
 	return got

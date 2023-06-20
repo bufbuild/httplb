@@ -53,3 +53,8 @@ issues:
     # Don't ban use of fmt.Errorf to create new errors, but the remaining
     # checks from err113 are useful.
     - "err113: do not define dynamic errors.*"
+  exclude-rules:
+    - path: (.+)_test.go
+      linters:
+        # Needlessly verbose inside of test-only code.
+        - forcetypeassert
