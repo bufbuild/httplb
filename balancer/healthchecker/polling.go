@@ -23,8 +23,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/internal"
-	"github.com/bufbuild/go-http-balancer/internal/clock"
+	"github.com/bufbuild/go-http-balancer/internal"
 )
 
 type pollingChecker struct {
@@ -37,7 +36,7 @@ type pollingChecker struct {
 
 	prober Prober
 	rnd    *rand.Rand
-	clock  clock.Clock
+	clock  internal.Clock
 }
 
 type pollingCheckerTask struct {
@@ -108,7 +107,7 @@ func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
 		unhealthyThreshold: config.UnhealthyThreshold,
 		prober:             prober,
 		rnd:                internal.NewLockedRand(),
-		clock:              clock.NewRealClock(),
+		clock:              internal.NewRealClock(),
 	}
 }
 

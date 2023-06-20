@@ -31,7 +31,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/balancer"
 	"github.com/bufbuild/go-http-balancer/balancer/conn"
 	"github.com/bufbuild/go-http-balancer/balancer/picker"
-	"github.com/bufbuild/go-http-balancer/internal/clock"
+	"github.com/bufbuild/go-http-balancer/internal"
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"golang.org/x/sync/errgroup"
 )
@@ -67,7 +67,7 @@ type mainTransport struct {
 	cancel               context.CancelFunc
 	idleTransportTimeout time.Duration
 	clientOptions        *clientOptions
-	clock                clock.Clock
+	clock                internal.Clock
 
 	runningPools sync.WaitGroup
 
@@ -85,7 +85,7 @@ func newTransport(opts *clientOptions) *mainTransport {
 		rootCtx:              ctx,
 		cancel:               cancel,
 		clientOptions:        opts,
-		clock:                clock.NewRealClock(),
+		clock:                internal.NewRealClock(),
 		idleTransportTimeout: opts.idleTransportTimeout,
 		pools:                map[target]transportPoolEntry{},
 	}

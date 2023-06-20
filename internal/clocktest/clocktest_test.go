@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/internal/clock"
+	"github.com/bufbuild/go-http-balancer/internal"
 )
 
 func TestNewFakeClock(t *testing.T) {
@@ -27,6 +27,6 @@ func TestNewFakeClock(t *testing.T) {
 	// The purpose of this test is to make it obvious if the type assertion
 	// in NewFakeClock()/NewFakeClockAt() ever breaks.
 
-	var _ clock.Clock = NewFakeClock()
-	var _ clock.Clock = NewFakeClockAt(time.Now())
+	var _ internal.Clock = NewFakeClock()
+	var _ internal.Clock = NewFakeClockAt(time.Now())
 }

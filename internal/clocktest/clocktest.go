@@ -27,7 +27,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/internal/clock"
+	"github.com/bufbuild/go-http-balancer/internal"
 	"github.com/jonboulle/clockwork"
 )
 
@@ -35,7 +35,7 @@ import (
 // through time. For more information, see the documentation for Clockwork.
 // https://pkg.go.dev/github.com/jonboulle/clockwork
 type FakeClock interface {
-	clock.Clock
+	internal.Clock
 	Advance(d time.Duration)
 	BlockUntil(waiters int)
 	BlockUntilContext(ctx context.Context, n int) error
@@ -72,20 +72,20 @@ var _ FakeClock = fakeClock{nil}
 // NewTicker implements clock.Clock by re-boxing the clockwork.Ticker returned
 // by clockwork.Clock.NewTicker as a clock.Ticker. See package comment for more
 // information on why this is necessary.
-func (f fakeClock) NewTicker(d time.Duration) clock.Ticker {
+func (f fakeClock) NewTicker(d time.Duration) internal.Ticker {
 	return f.clockworkFakeClock.NewTicker(d)
 }
 
 // NewTimer implements clock.Clock by re-boxing the clockwork.Timer returned by
 // clockwork.Clock.NewTimer as a clock.Timer. See package comment for more
 // information on why this is necessary.
-func (f fakeClock) NewTimer(d time.Duration) clock.Timer {
+func (f fakeClock) NewTimer(d time.Duration) internal.Timer {
 	return f.clockworkFakeClock.NewTimer(d)
 }
 
 // AfterFunc implements clock.Clock by re-boxing the clockwork.Timer returned by
 // clockwork.Clock.AfterFunc as a clock.Timer. See package comment for more
 // information on why this is necessary.
-func (f fakeClock) AfterFunc(d time.Duration, fn func()) clock.Timer {
+func (f fakeClock) AfterFunc(d time.Duration, fn func()) internal.Timer {
 	return f.clockworkFakeClock.AfterFunc(d, fn)
 }

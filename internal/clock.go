@@ -15,7 +15,7 @@
 // Package clock is a simple implementation of a clock interface compatible with
 // jonboulle/clockwork. The intent is to make the clockwork package only a
 // dependency for tests, and thus allow it to be pruned in the module graph.
-package clock
+package internal
 
 import "time"
 

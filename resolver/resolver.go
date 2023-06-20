@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/internal/clock"
+	"github.com/bufbuild/go-http-balancer/internal"
 )
 
 // Resolver is an interface for types that provide continuous name resolution.
@@ -90,7 +90,7 @@ type dnsSingleShotResolver struct {
 type pollingResolver struct {
 	resolver   ResolveProber
 	defaultTTL time.Duration
-	clock      clock.Clock
+	clock      internal.Clock
 }
 
 type pollingResolverTask struct {
@@ -154,7 +154,7 @@ func NewPollingResolver(
 	return &pollingResolver{
 		resolver:   resolver,
 		defaultTTL: defaultTTL,
-		clock:      clock.NewRealClock(),
+		clock:      internal.NewRealClock(),
 	}
 }
 
