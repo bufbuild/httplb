@@ -52,6 +52,7 @@ generate: $(BIN)/license-header ## Regenerate code and licenses
 
 .PHONY: lint
 lint: $(BIN)/golangci-lint $(BIN)/checklocks ## Lint
+	$(GO) vet ./...
 	$(GO) vet -vettool=$(BIN)/checklocks ./...
 	$(BIN)/golangci-lint run
 
