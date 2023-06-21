@@ -166,9 +166,9 @@ func (r *pollingChecker) New(
 
 			lastState := state
 			switch {
-			case counter == -1:
-				fallthrough
 			default:
+				fallthrough
+			case counter == -1:
 				state = result
 				counter = 0
 
