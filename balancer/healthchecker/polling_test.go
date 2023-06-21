@@ -112,17 +112,21 @@ func TestPollingCheckerThresholds(t *testing.T) {
 		testClock.Advance(interval)
 	}
 
-	// Require two healthy checks to pass
-	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
+	// Require only one passing check to become healthy initially
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	assert.Equal(t, Healthy, <-tracker)
 
-	// Require three unheatlhy checks to fail
+	// Require three failing checks to become unhealthy
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
-	close(conn)
 	assert.Equal(t, Unhealthy, <-tracker)
+
+	// Require two checks to become healthy again
+	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
+	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
+	close(conn)
+	assert.Equal(t, Healthy, <-tracker)
 
 	process.Close()
 }
