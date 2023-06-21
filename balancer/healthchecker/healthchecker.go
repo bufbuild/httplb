@@ -41,6 +41,11 @@ const (
 	Unhealthy = HealthState(2)
 )
 
+//nolint:gochecknoglobals
+var (
+	statesInOrder = []HealthState{Healthy, Unknown, Degraded, Unhealthy}
+)
+
 func (s HealthState) String() string {
 	switch s {
 	case Healthy:
@@ -70,32 +75,10 @@ type Checker interface {
 	New(context.Context, conn.Conn, HealthTracker) io.Closer
 }
 
+// HealthTracker represents an object that tracks the health state of various connections.
+// This is the interface through which a Checker communicates state updates.
 type HealthTracker interface {
 	UpdateHealthState(conn.Conn, HealthState)
-}
-
-// The UsabilityOracle decides which connections are usable. Given the set
-// of all connections and an accessor, for querying the health state of a
-// particular connection, it returns a slice of "usable" connections.
-//
-// Implementations of this function must NOT use the given accessor function
-// after they return.
-type UsabilityOracle func(conn.Connections, func(conn.Conn) HealthState) []conn.Conn
-
-// DefaultUsabilityOracle returns an oracle that considers connections to be
-// usable if they are the given state or better.
-func DefaultUsabilityOracle(threshold HealthState) UsabilityOracle {
-	return func(allConns conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
-		length := allConns.Len()
-		usable := make([]conn.Conn, 0, length)
-		for i := 0; i < length; i++ {
-			connection := allConns.Get(i)
-			if state(connection) <= threshold {
-				usable = append(usable, connection)
-			}
-		}
-		return usable
-	}
 }
 
 type noOpChecker struct{}

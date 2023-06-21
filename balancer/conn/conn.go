@@ -73,3 +73,21 @@ func SliceToSet(conns []Conn) Set {
 	}
 	return set
 }
+
+// ConnectionsFromSlice returns a conn.Connections that
+// represents the given slice. Note that no defensive
+// copy is made, so changes to the given slice's contents
+// will be reflected in the returned value.
+func ConnectionsFromSlice(conns []Conn) Connections {
+	return connections(conns)
+}
+
+type connections []Conn
+
+func (c connections) Len() int {
+	return len(c)
+}
+
+func (c connections) Get(i int) Conn {
+	return c[i]
+}

@@ -108,7 +108,7 @@ func (f *defaultBalancerFactory) applyDefaults() {
 		f.healthChecker = healthchecker.NoOpChecker
 	}
 	if f.usabilityOracle == nil {
-		f.usabilityOracle = healthchecker.DefaultUsabilityOracle(healthchecker.Unknown)
+		f.usabilityOracle = healthchecker.NewOracle(healthchecker.Unknown)
 	}
 }
 
@@ -336,7 +336,7 @@ func (b *defaultBalancer) connHealthLocked(c conn.Conn) healthchecker.HealthStat
 
 // +checklocks:b.mu
 func (b *defaultBalancer) newPickerLocked() {
-	usable := b.usabilityOracle(connections(b.conns), b.connHealthLocked)
+	usable := b.usabilityOracle(conn.ConnectionsFromSlice(b.conns), b.connHealthLocked)
 	if len(usable) == 0 {
 		addrs := b.latestAddrs.Load()
 		if addrs == nil || len(*addrs) == 0 {
@@ -350,7 +350,7 @@ func (b *defaultBalancer) newPickerLocked() {
 		b.setErrorPickerLocked(errNoHealthyConnections)
 		return
 	}
-	b.latestPicker = b.picker.New(b.latestPicker, connections(usable))
+	b.latestPicker = b.picker.New(b.latestPicker, conn.ConnectionsFromSlice(usable))
 	// TODO: Configurable way to assess if pool is "warm" or not. Until it's
 	//       configurable, we consider having at least one usable connection
 	//       to be warm.
@@ -366,14 +366,4 @@ func (b *defaultBalancer) setErrorPicker(err error) {
 // +checklocks:b.mu
 func (b *defaultBalancer) setErrorPickerLocked(err error) {
 	b.pool.UpdatePicker(picker.ErrorPicker(err), false)
-}
-
-type connections []conn.Conn
-
-func (c connections) Len() int {
-	return len(c)
-}
-
-func (c connections) Get(i int) conn.Conn {
-	return c[i]
 }
