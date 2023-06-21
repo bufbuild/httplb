@@ -107,19 +107,19 @@ func WithBalancer(balancerFactory balancer.Factory) ClientOption {
 // response from the proxy for a CONNECT request. If the onProxyConnectFunc
 // returns an error, the request will fail immediately with that error.
 //
-// The given proxyHeadersFunc, if non-nil, provides a way to supply extra
-// request headers to the proxy for a CONNECT request. The target provided
-// to this function is the "host:port" to which to connect. If no extra
-// headers should be added to the request, the function should return nil, nil.
-// If the function returns an error, the request will fail immediately with
-// that error.
+// The given proxyConnectHeadersFunc, if non-nil, provides a way to supply
+// extra request headers to the proxy for a CONNECT request. The target
+// provided to this function is the "host:port" to which to connect. If no
+// extra headers should be added to the request, the function should return
+// nil, nil. If the function returns an error, the request will fail
+// immediately with that error.
 func WithProxy(
 	proxyFunc func(*http.Request) (*url.URL, error),
-	proxyHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
+	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
 ) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.proxyFunc = proxyFunc
-		opts.proxyHeadersFunc = proxyHeadersFunc
+		opts.proxyConnectHeadersFunc = proxyConnectHeadersFunc
 	})
 }
 
@@ -296,24 +296,6 @@ func WithDisallowUnconfiguredTargets() ClientOption {
 	})
 }
 
-// WithDebugResourceLeaks configures the client so that it calls the given
-// function if it detects a resource leak in a client operation. A resource
-// leak is where the calling code fails to exhaust or close the body of an
-// HTTP response. If your program has such a resource leak, some features of
-// load balancing may not work as expected. For example, a "least loaded"
-// algorithm will see these HTTP operations as forever in progress. Also,
-// attempts to Close a client may hang indefinitely, waiting on these
-// orphaned operations to complete.
-//
-// It is recommended that, in unit tests of HTTP client code, the client be
-// configured with this option using a callback that will fail the test or
-// panic if a leak is detected.
-func WithDebugResourceLeaks(callback func(req *http.Request, resp *http.Response)) ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
-		opts.resourceLeakCallback = callback
-	})
-}
-
 // NewClient returns a new HTTP client that uses the given options.
 func NewClient(options ...ClientOption) *http.Client {
 	var opts clientOptions
@@ -383,8 +365,6 @@ type clientOptions struct {
 	// the above options are then applied to these computed results
 	computedDefaultTargetOptions targetOptions
 	computedTargetOptions        map[target]*targetOptions
-
-	resourceLeakCallback func(req *http.Request, resp *http.Response)
 }
 
 func (opts *clientOptions) applyDefaults() {
@@ -470,18 +450,18 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 }
 
 type targetOptions struct {
-	resolver               resolver.Resolver
-	balancer               balancer.Factory
-	dialFunc               func(ctx context.Context, network, addr string) (net.Conn, error)
-	proxyFunc              func(*http.Request) (*url.URL, error)
-	proxyHeadersFunc       func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
-	redirectFunc           func(req *http.Request, via []*http.Request) error
-	maxResponseHeaderBytes int64
-	idleConnTimeout        time.Duration
-	tlsClientConfig        *tls.Config
-	tlsHandshakeTimeout    time.Duration
-	defaultTimeout         time.Duration
-	requestTimeout         time.Duration
+	resolver                resolver.Resolver
+	balancer                balancer.Factory
+	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
+	proxyFunc               func(*http.Request) (*url.URL, error)
+	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	redirectFunc            func(req *http.Request, via []*http.Request) error
+	maxResponseHeaderBytes  int64
+	idleConnTimeout         time.Duration
+	tlsClientConfig         *tls.Config
+	tlsHandshakeTimeout     time.Duration
+	defaultTimeout          time.Duration
+	requestTimeout          time.Duration
 }
 
 func (opts *targetOptions) applyDefaults() {

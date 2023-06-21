@@ -24,28 +24,21 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	DefaultUsabilityOracle = func(allCons conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
-		length := allCons.Len()
-		usable := make([]conn.Conn, 0, length)
-		for i := 0; i < length; i++ {
-			connection := allCons.Get(i)
-			if state(connection) == Healthy {
-				usable = append(usable, connection)
-			}
-		}
-		return usable
-	}
-
+	// NoOpChecker is a checker implementation that does nothing. It never updates
+	// the health states of any connections and uses no resources.
 	NoOpChecker Checker = noOpChecker{}
 )
 
+// HealthState represents the state of a connection. Their natural ordering is
+// for "better" states to be before "worse" states. So Healthy is the lowest
+// value and Unhealthy is the highest.
 type HealthState int
 
 const (
-	Unknown = HealthState(iota)
-	Healthy
-	Degraded
-	Unhealthy
+	Healthy   = HealthState(-1)
+	Unknown   = HealthState(0)
+	Degraded  = HealthState(1)
+	Unhealthy = HealthState(2)
 )
 
 func (s HealthState) String() string {
@@ -89,11 +82,25 @@ type HealthTracker interface {
 // after they return.
 type UsabilityOracle func(conn.Connections, func(conn.Conn) HealthState) []conn.Conn
 
+// DefaultUsabilityOracle returns an oracle that considers connections to be
+// usable if they are the given state or better.
+func DefaultUsabilityOracle(threshold HealthState) UsabilityOracle {
+	return func(allCons conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
+		length := allCons.Len()
+		usable := make([]conn.Conn, 0, length)
+		for i := 0; i < length; i++ {
+			connection := allCons.Get(i)
+			if state(connection) <= threshold {
+				usable = append(usable, connection)
+			}
+		}
+		return usable
+	}
+}
+
 type noOpChecker struct{}
 
-func (n noOpChecker) New(_ context.Context, c conn.Conn, tracker HealthTracker) io.Closer {
-	// the no-op checker assumes all connections are healthy
-	go tracker.UpdateHealthState(c, Healthy)
+func (n noOpChecker) New(_ context.Context, _ conn.Conn, _ HealthTracker) io.Closer {
 	return noOpCloser{}
 }
 

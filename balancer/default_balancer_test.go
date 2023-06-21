@@ -111,7 +111,7 @@ func TestDefaultBalancer_HealthChecking(t *testing.T) {
 	pool := balancertesting.NewFakeConnPool()
 	balancer := factory.New(context.Background(), "http", "foo.com", pool)
 
-	oracle.Set(healthchecker.DefaultUsabilityOracle) // only consider healthy connections usable
+	oracle.Set(healthchecker.DefaultUsabilityOracle(healthchecker.Healthy)) // only consider healthy connections usable
 	checker.SetInitialState(healthchecker.Unknown)
 
 	// Initial resolve
@@ -180,7 +180,7 @@ func TestDefaultBalancer_HealthChecking(t *testing.T) {
 	awaitPickerUpdate(t, pool, true, addrs[1:], []int{2, 5, 6})
 
 	// only consider healthy connections
-	oracle.Set(healthchecker.DefaultUsabilityOracle)
+	oracle.Set(healthchecker.DefaultUsabilityOracle(healthchecker.Healthy))
 	checker.SetInitialState(healthchecker.Healthy)
 	checker.UpdateHealthState(conn1, healthchecker.Healthy)
 	addrs = []resolver.Address{
