@@ -85,11 +85,11 @@ type UsabilityOracle func(conn.Connections, func(conn.Conn) HealthState) []conn.
 // DefaultUsabilityOracle returns an oracle that considers connections to be
 // usable if they are the given state or better.
 func DefaultUsabilityOracle(threshold HealthState) UsabilityOracle {
-	return func(allCons conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
-		length := allCons.Len()
+	return func(allConns conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
+		length := allConns.Len()
 		usable := make([]conn.Conn, 0, length)
 		for i := 0; i < length; i++ {
-			connection := allCons.Get(i)
+			connection := allConns.Get(i)
 			if state(connection) <= threshold {
 				usable = append(usable, connection)
 			}

@@ -109,7 +109,7 @@ func TestNewClient_MultipleTargets(t *testing.T) {
 	err := Close(client)
 	require.NoError(t, err)
 	// After Close(client) returns, all outstanding requests are done. The finished counter
-	// is updated when the goroutine exists which could happen sometime after the requests
+	// is updated when the goroutine exits, which could happen sometime after the requests
 	// are actually completed. So it is possible for it to have not yet reached three at
 	// this point. So we wait a short time. (In local test environments, the counter was
 	// always already 3 at this point, but this is to avoid timing-based flakes in CI.)
