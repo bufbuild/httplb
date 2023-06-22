@@ -47,7 +47,8 @@ var (
 type FakeConn struct {
 	Index int
 
-	addr atomic.Pointer[resolver.Address]
+	addr    atomic.Pointer[resolver.Address]
+	prewarm func(conn.Conn, context.Context) error
 }
 
 // Scheme implements the conn.Conn interface. For a FakeConn, it always
@@ -76,10 +77,14 @@ func (c *FakeConn) RoundTrip(*http.Request, func()) (*http.Response, error) {
 	return nil, errors.New("FakeConn does not support RoundTrip")
 }
 
-// Prewarm implements the conn.Conn interface. For a FakeConn, it always
-// returns nil immediately.
-func (c *FakeConn) Prewarm(_ context.Context) error {
-	return nil
+// Prewarm implements the conn.Conn interface. For a FakeConn, it will
+// call the FakeConnPool's Prewarm function, if it was set. Otherwise,
+// it returns nil immediately.
+func (c *FakeConn) Prewarm(ctx context.Context) error {
+	if c.prewarm == nil {
+		return nil
+	}
+	return c.prewarm(c, ctx)
 }
 
 // FakeConnPool is an implementation of balancer.ConnPool that can be used
@@ -90,6 +95,12 @@ func (c *FakeConn) Prewarm(_ context.Context) error {
 //
 // See NewFakeConnPool.
 type FakeConnPool struct {
+	// Prewarm can be set to a function that is invoked by the Prewarm
+	// method of connections created by this pool. It should be set
+	// immediately after the pool is created, before any connections
+	// are created, to avoid races.
+	Prewarm func(conn.Conn, context.Context) error
+
 	pickerUpdate chan struct{}
 	connsUpdate  chan struct{}
 
@@ -121,7 +132,7 @@ func (p *FakeConnPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 		p.active = conn.Set{}
 	}
 	p.index++
-	newConn := &FakeConn{Index: p.index}
+	newConn := &FakeConn{Index: p.index, prewarm: p.Prewarm}
 	newConn.addr.Store(&address)
 	p.active[newConn] = struct{}{}
 	select {
