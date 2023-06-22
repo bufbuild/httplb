@@ -30,7 +30,7 @@ func TestNewOracle_Basic(t *testing.T) {
 	states := make(map[conn.Conn]HealthState, 20)
 	for i := range conns {
 		conns[i] = &fakeConn{}
-		// first give will be healthy, then unknown, then degraded, then unhealthy
+		// first five will be healthy, then unknown, then degraded, then unhealthy
 		states[conns[i]] = HealthState(i/5 - 1)
 	}
 	rand.Shuffle(len(conns), func(i, j int) {
@@ -79,7 +79,7 @@ func TestNewOracle_MinimumCount(t *testing.T) {
 	states := make(map[conn.Conn]HealthState, 20)
 	for i := range conns {
 		conns[i] = &fakeConn{}
-		// first give will be healthy, then unknown, then degraded, then unhealthy
+		// first five will be healthy, then unknown, then degraded, then unhealthy
 		states[conns[i]] = HealthState(i/5 - 1)
 	}
 	rand.Shuffle(len(conns), func(i, j int) {
