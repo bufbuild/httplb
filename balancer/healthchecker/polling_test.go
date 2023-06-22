@@ -28,9 +28,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type fakeConn chan *http.Response
+type fakeConnChan chan *http.Response
 
-func (f fakeConn) RoundTrip(*http.Request, func()) (*http.Response, error) {
+func (f fakeConnChan) RoundTrip(*http.Request, func()) (*http.Response, error) {
 	response := <-f
 	if response == nil {
 		return nil, errors.New("fake error")
@@ -38,15 +38,15 @@ func (f fakeConn) RoundTrip(*http.Request, func()) (*http.Response, error) {
 	return response, nil
 }
 
-func (f fakeConn) Scheme() string {
+func (f fakeConnChan) Scheme() string {
 	return "http"
 }
 
-func (f fakeConn) Address() resolver.Address {
+func (f fakeConnChan) Address() resolver.Address {
 	return resolver.Address{HostPort: "::1"}
 }
 
-func (f fakeConn) UpdateAttributes(attrs.Attributes) {}
+func (f fakeConnChan) UpdateAttributes(attrs.Attributes) {}
 
 type fakeHealthTracker chan HealthState
 
@@ -65,20 +65,20 @@ func TestPollingChecker(t *testing.T) {
 	tracker := make(fakeHealthTracker, 1)
 
 	// Unhealthy (HTTP error)
-	conn := make(fakeConn)
+	conn := make(fakeConnChan)
 	close(conn)
 	checker.New(ctx, conn, tracker).Close()
 	assert.Equal(t, Unhealthy, <-tracker)
 
 	// Unhealthy (HTTP 5xx)
-	conn = make(fakeConn, 1)
+	conn = make(fakeConnChan, 1)
 	conn <- &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody}
 	checker.New(ctx, conn, tracker).Close()
 	assert.Equal(t, Unhealthy, <-tracker)
 	close(conn)
 
 	// Healthy (HTTP 2xx)
-	conn = make(fakeConn, 1)
+	conn = make(fakeConnChan, 1)
 	conn <- &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
 	checker.New(ctx, conn, tracker).Close()
 	assert.Equal(t, Healthy, <-tracker)
@@ -101,7 +101,7 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	}, NewSimpleProber("/"))
 	checker.(*pollingChecker).clock = testClock
 
-	conn := make(fakeConn)
+	conn := make(fakeConnChan)
 	tracker := make(fakeHealthTracker)
 	process := checker.New(ctx, conn, tracker)
 	advance := func(response *http.Response) {
