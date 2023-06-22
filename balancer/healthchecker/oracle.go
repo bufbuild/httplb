@@ -57,11 +57,11 @@ func NewOracle(threshold HealthState, opts ...NewOracleOption) UsabilityOracle {
 	rnd := internal.NewLockedRand()
 	// If preferring healthier, then we first need to group connections by state and
 	// then consider them in order, best to worst state.
-	return func(allCons conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
-		length := allCons.Len()
+	return func(allConns conn.Connections, state func(conn.Conn) HealthState) []conn.Conn {
+		length := allConns.Len()
 		connsByState := map[HealthState][]conn.Conn{}
 		for i := 0; i < length; i++ {
-			connection := allCons.Get(i)
+			connection := allConns.Get(i)
 			connState := state(connection)
 			connsByState[connState] = append(connsByState[connState], connection)
 		}
