@@ -149,7 +149,12 @@ func (r *pollingChecker) New(
 	}
 
 	state := Unknown
-	counter := -1
+
+	// Start the counter off at the healthy threshold so that it can transition
+	// into healthy state in one passed check. The unhealthy threshold is not
+	// a concern since the initial state (Unknown) is already considered to be
+	// unhealthy.
+	counter := r.healthyThreshold
 
 	go func() {
 		defer close(task.doneSignal)
@@ -166,10 +171,6 @@ func (r *pollingChecker) New(
 
 			lastState := state
 			switch {
-			case counter == -1:
-				state = result
-				counter = 0
-
 			case result == Healthy && (state == Unhealthy || state == Degraded || state == Unknown):
 				counter++
 				if counter >= r.healthyThreshold {
