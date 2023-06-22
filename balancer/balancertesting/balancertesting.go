@@ -76,6 +76,12 @@ func (c *FakeConn) RoundTrip(*http.Request, func()) (*http.Response, error) {
 	return nil, errors.New("FakeConn does not support RoundTrip")
 }
 
+// Prewarm implements the conn.Conn interface. For a FakeConn, it always
+// returns nil immediately.
+func (c *FakeConn) Prewarm(_ context.Context) error {
+	return nil
+}
+
 // FakeConnPool is an implementation of balancer.ConnPool that can be used
 // for testing balancer.Balancer implementations. It marks the connections
 // created with its NewConn method with an index in sequential order. So the

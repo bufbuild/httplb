@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -59,7 +60,7 @@ type NewFactoryOption interface {
 // for each Balancer. The ConnManager is what decides what connections to
 // create or remove.
 func WithConnManager(connManager connmanager.Factory) NewFactoryOption {
-	return newFactoryOption(func(factory *defaultBalancerFactory) {
+	return newFactoryOptionFunc(func(factory *defaultBalancerFactory) {
 		factory.connManager = connManager
 	})
 }
@@ -68,7 +69,7 @@ func WithConnManager(connManager connmanager.Factory) NewFactoryOption {
 // A new picker will be created every time the set of usable connections
 // changes for a given balancer.
 func WithPicker(picker picker.Factory) NewFactoryOption {
-	return newFactoryOption(func(factory *defaultBalancerFactory) {
+	return newFactoryOptionFunc(func(factory *defaultBalancerFactory) {
 		factory.picker = picker
 	})
 }
@@ -77,16 +78,59 @@ func WithPicker(picker picker.Factory) NewFactoryOption {
 // checker. This provides details about which resolved addresses are
 // healthy or not. The given oracle is used to interpret the health check
 // results and decide which connections are usable.
+//
+// If no such option is given, then no health checking is done and all
+// connections (which remain in the Unknown health state) will be considered
+// usable.
 func WithHealthChecks(checker healthchecker.Checker, oracle healthchecker.UsabilityOracle) NewFactoryOption {
-	return newFactoryOption(func(factory *defaultBalancerFactory) {
+	return newFactoryOptionFunc(func(factory *defaultBalancerFactory) {
 		factory.healthChecker = checker
 		factory.usabilityOracle = oracle
 	})
 }
 
-type newFactoryOption func(factory *defaultBalancerFactory)
+// WithWarmDefinition provides the definition of "warm" for a backend. The
+// definition states that the connections to the backend are "warm" when there
+// are at least the given number of connections in the given health state (or
+// healthier). Note that only *usable* connections are considered. Usable
+// connections are those returned from the balancer's UsabilityOracle (see
+// WithHealthChecks).
+//
+// The numConns, if not zero, is an absolute minimum number of connections. So
+// if this were set to 3, the backend isn't warm until there at least 3
+// connections in the given state.
+//
+// The percentConns, if not zero, is a percentage (from 0 to 100) of connections.
+// So if the total number of connections is 20 and this value is 10.0, then at
+// least 2 usable connections (10% * 20 == 2) must reach the given health state
+// for the backend to be considered warm.
+//
+// If both numConns and percentConns are specified, the minimum number of
+// connections will be the maximum of the two.
+//
+// If no such option is provided, then default definition behaves as if
+// the following were used:
+//
+//	balancer.WithWarmDefinition(1, 0, healthchecker.Unknown)
+//
+// So there must be at least one connection, and it must be either in the
+// Unknown or Healthy state.
+//
+// The "warm" connections must also be considered warm per the
+// httplb.RoundTripperFactory that created their underlying transport.
+// If the result returned by the factory included a Prewarm function,
+// it must complete before the connection is considered warm.
+func WithWarmDefinition(numConns int, percentConns float64, state healthchecker.HealthState) NewFactoryOption {
+	return newFactoryOptionFunc(func(factory *defaultBalancerFactory) {
+		factory.warmMinCount = numConns
+		factory.warmMinPercent = percentConns
+		factory.warmMaxState = state
+	})
+}
 
-func (o newFactoryOption) apply(factory *defaultBalancerFactory) {
+type newFactoryOptionFunc func(factory *defaultBalancerFactory)
+
+func (o newFactoryOptionFunc) apply(factory *defaultBalancerFactory) {
 	o(factory)
 }
 
@@ -95,6 +139,9 @@ type defaultBalancerFactory struct {
 	picker          picker.Factory
 	healthChecker   healthchecker.Checker
 	usabilityOracle healthchecker.UsabilityOracle
+	warmMinCount    int
+	warmMinPercent  float64
+	warmMaxState    healthchecker.HealthState
 }
 
 func (f *defaultBalancerFactory) applyDefaults() {
@@ -121,9 +168,12 @@ func (f *defaultBalancerFactory) New(ctx context.Context, scheme, hostPort strin
 		picker:          f.picker,
 		healthChecker:   f.healthChecker,
 		usabilityOracle: f.usabilityOracle,
+		warmMinCount:    f.warmMinCount,
+		warmMinPercent:  f.warmMinPercent,
+		warmMaxState:    f.warmMaxState,
 		resolverUpdates: make(chan struct{}, 1),
 		closed:          make(chan struct{}),
-		health:          map[conn.Conn]connHealth{},
+		connInfo:        map[conn.Conn]connInfo{},
 	}
 	balancer.connManager = f.connManager.New(ctx, scheme, hostPort, balancer.updateConns)
 	go balancer.receiveAddrs(ctx)
@@ -139,6 +189,9 @@ type defaultBalancer struct {
 	picker          picker.Factory                // +checklocksignore: mu is not required, but happens to always be held.
 	healthChecker   healthchecker.Checker         // +checklocksignore: mu is not required, but happens to always be held.
 	usabilityOracle healthchecker.UsabilityOracle // +checklocksignore: mu is not required, but happens to always be held.
+	warmMinCount    int
+	warmMinPercent  float64
+	warmMaxState    healthchecker.HealthState
 
 	closed chan struct{}
 	// closedErr is written before writing to closed chan, so can only be read
@@ -156,20 +209,22 @@ type defaultBalancer struct {
 	// +checklocks:mu
 	conns []conn.Conn
 	// +checklocks:mu
-	health map[conn.Conn]connHealth
+	connInfo map[conn.Conn]connInfo
 }
 
-type connHealth struct {
+type connInfo struct {
 	state        healthchecker.HealthState
+	warm         bool
+	cancelWarm   context.CancelFunc
 	closeChecker io.Closer
 }
 
 func (b *defaultBalancer) UpdateHealthState(connection conn.Conn, state healthchecker.HealthState) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	info, ok := b.health[connection]
+	info, ok := b.connInfo[connection]
 	if !ok {
-		// when closing, we may remove an entry from b.health, but
+		// when closing, we may remove an entry from b.connInfo, but
 		// associated checker is still closing, so we may get a late
 		// arriving update that we can ignore
 		return
@@ -179,7 +234,22 @@ func (b *defaultBalancer) UpdateHealthState(connection conn.Conn, state healthch
 		return
 	}
 	info.state = state
-	b.health[connection] = info
+	b.connInfo[connection] = info
+	b.newPickerLocked()
+}
+
+func (b *defaultBalancer) warmedUp(connection conn.Conn) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	info, ok := b.connInfo[connection]
+	if !ok {
+		// when closing, we may remove an entry from b.connInfo, but
+		// associated warm-up routine could still be running, so we
+		// may get a late arriving update that we can ignore
+		return
+	}
+	info.warm = true
+	b.connInfo[connection] = info
 	b.newPickerLocked()
 }
 
@@ -226,13 +296,14 @@ func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 				return nil
 			}
 		}
+		grp.Go(doClose(b.connManager))
 		func() {
 			b.mu.Lock()
 			defer b.mu.Unlock()
-			grp.Go(doClose(b.connManager))
-			for key, health := range b.health {
-				delete(b.health, key)
-				closer := health.closeChecker
+			for key, info := range b.connInfo {
+				delete(b.connInfo, key)
+				closer := info.closeChecker
+				info.cancelWarm()
 				if closer != nil {
 					grp.Go(doClose(closer))
 				}
@@ -253,13 +324,15 @@ func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 		case <-b.resolverUpdates:
 			addrs := b.latestAddrs.Load()
 			if addrs == nil {
-				err := b.latestErr.Load()
-				if err == nil {
+				errPtr := b.latestErr.Load()
+				if errPtr == nil {
 					// No addresses and no error? Should not be possible...
 					// We'll ignore until we see one or the other.
 					continue
 				}
-				resolveErr := *err
+				// reset error once we've observed it
+				b.latestErr.CompareAndSwap(errPtr, nil)
+				resolveErr := *errPtr
 				if resolveErr == nil {
 					// OnError(nil) was called, but should not have been
 					resolveErr = errors.New("internal: resolver failed but did not report error")
@@ -267,6 +340,10 @@ func (b *defaultBalancer) receiveAddrs(ctx context.Context) {
 				b.setErrorPicker(resolveErr)
 				continue
 			}
+			// TODO: Look at latestErr and log if non-nil? As is, a resolver could
+			//       provide addresses and then subsequently provide errors, but those
+			//       errors will be effectively ignored and the original addresses
+			//       will continue to be used.
 			// TODO: If we can get an update that says zero addresses but no error,
 			//       should we respect it, and potentially close all connections?
 			//       For now, we ignore the update, and keep the last known addresses.
@@ -310,19 +387,28 @@ func (b *defaultBalancer) updateConns(newAddrs []resolver.Address, removeConns [
 		if _, ok := setToRemove[existing]; ok {
 			// close health check process for this connection
 			// and omit it from newConns
-			closer := b.health[existing].closeChecker
-			delete(b.health, existing)
-			if closer != nil {
-				_ = closer.Close()
+			info := b.connInfo[existing]
+			delete(b.connInfo, existing)
+			info.cancelWarm()
+			if info.closeChecker != nil {
+				_ = info.closeChecker.Close()
 			}
 			continue
 		}
 		newConns = append(newConns, existing)
 	}
 	newConns = append(newConns, addConns...)
-	for i, c := range addConns {
-		healthChecker := b.healthChecker.New(b.ctx, addConns[i], b)
-		b.health[c] = connHealth{closeChecker: healthChecker}
+	for i := range addConns {
+		connection := addConns[i]
+		connCtx, connCancel := context.WithCancel(b.ctx)
+		healthChecker := b.healthChecker.New(connCtx, connection, b)
+		go func() {
+			defer connCancel()
+			if err := connection.Prewarm(connCtx); err == nil {
+				b.warmedUp(connection)
+			}
+		}()
+		b.connInfo[connection] = connInfo{closeChecker: healthChecker, cancelWarm: connCancel}
 	}
 	b.conns = newConns
 	b.newPickerLocked()
@@ -331,7 +417,7 @@ func (b *defaultBalancer) updateConns(newAddrs []resolver.Address, removeConns [
 
 // +checklocks:b.mu
 func (b *defaultBalancer) connHealthLocked(c conn.Conn) healthchecker.HealthState {
-	return b.health[c].state
+	return b.connInfo[c].state
 }
 
 // +checklocks:b.mu
@@ -344,7 +430,7 @@ func (b *defaultBalancer) newPickerLocked() {
 		}
 		// TODO: Should we set the picker to fail? Or should we let the client
 		//       continue with previous picker (which may also fail, but it's
-		//       no guaranteed to fail). Or maybe the client should be able to
+		//       not guaranteed to fail). Or maybe the client should be able to
 		//       await (up to time limit) connections becoming healthy instead
 		//       of failing fast?
 		b.setErrorPickerLocked(errNoHealthyConnections)
@@ -354,7 +440,34 @@ func (b *defaultBalancer) newPickerLocked() {
 	// TODO: Configurable way to assess if pool is "warm" or not. Until it's
 	//       configurable, we consider having at least one usable connection
 	//       to be warm.
-	b.pool.UpdatePicker(b.latestPicker, true)
+	b.pool.UpdatePicker(b.latestPicker, b.isWarmLocked(usable, len(b.conns)))
+}
+
+// +checklocks:b.mu
+func (b *defaultBalancer) isWarmLocked(conns []conn.Conn, allLen int) bool {
+	minConns := b.warmMinCount
+	if minPctConns := int(math.Round(b.warmMinPercent * float64(allLen) / 100)); minPctConns > minConns {
+		minConns = minPctConns
+	}
+	if minConns < 1 {
+		// definitely not warmed up if no connections are warm and adequately healthy
+		minConns = 1
+	}
+	if minConns > allLen {
+		// 100% is good enough, even if less than warmMinCount
+		minConns = allLen
+	}
+	var warmedCount int
+	for _, connection := range conns {
+		info := b.connInfo[connection]
+		if info.warm && info.state <= b.warmMaxState {
+			warmedCount++
+			if warmedCount == minConns {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *defaultBalancer) setErrorPicker(err error) {

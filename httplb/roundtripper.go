@@ -48,7 +48,7 @@ type RoundTripperResult struct {
 	// Prewarm is an optional function that will be called (if non-nil) to
 	// eagerly establish connections and perform any other checks so that there
 	// are no delays or unexpected errors incurred by the first HTTP request.
-	Prewarm func(ctx context.Context, addr string) error
+	Prewarm func(ctx context.Context, scheme, addr string) error
 }
 
 // RoundTripperOptions defines the options used to create a round-tripper.

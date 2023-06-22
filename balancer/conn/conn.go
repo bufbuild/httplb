@@ -15,6 +15,7 @@
 package conn
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/bufbuild/go-http-balancer/attrs"
@@ -35,6 +36,11 @@ type Conn interface {
 	Address() resolver.Address
 	// UpdateAttributes updates the connection's address to have the given attributes.
 	UpdateAttributes(attributes attrs.Attributes)
+	// Prewarm attempts to pre-warm this connection. Not all transports support
+	// this operation. For those that do not, calling this function is a no-op.
+	// It returns an error if the given context is cancelled or times out before
+	// the connection can finish warming up.
+	Prewarm(context.Context) error
 }
 
 // Connections represents a read-only set of connections.

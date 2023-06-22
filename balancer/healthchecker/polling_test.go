@@ -30,7 +30,7 @@ import (
 
 type fakeConnChan chan *http.Response
 
-func (f fakeConnChan) RoundTrip(*http.Request, func()) (*http.Response, error) {
+func (f fakeConnChan) RoundTrip(_ *http.Request, _ func()) (*http.Response, error) {
 	response := <-f
 	if response == nil {
 		return nil, errors.New("fake error")
@@ -46,7 +46,9 @@ func (f fakeConnChan) Address() resolver.Address {
 	return resolver.Address{HostPort: "::1"}
 }
 
-func (f fakeConnChan) UpdateAttributes(attrs.Attributes) {}
+func (f fakeConnChan) UpdateAttributes(_ attrs.Attributes) {}
+
+func (f fakeConnChan) Prewarm(_ context.Context) error { return nil }
 
 type fakeHealthTracker chan HealthState
 

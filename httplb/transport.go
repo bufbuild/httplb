@@ -409,6 +409,9 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 		doPrewarm: result.Prewarm,
 		closed:    make(chan struct{}),
 	}
+	if newConn.scheme == "" {
+		newConn.scheme = t.dest.scheme
+	}
 	newConn.doClose = func() {
 		if result.Close != nil {
 			result.Close()
@@ -540,36 +543,15 @@ func (t *transportPool) prewarm(ctx context.Context) error {
 		// not keeping this one warm...
 		return nil
 	}
-	select {
-	case <-t.pickerInitialized:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 	t.mu.RLock()
-	conns, closed := t.conns, t.closed
+	warm, closed := t.isWarm, t.closed
 	t.mu.RUnlock()
-	if closed {
+	if warm || closed {
 		return nil
 	}
-	// TODO: we probably want some sort of synchronization to
-	//       prevent trying to pre-warm a connection after it's
-	//       been closed (if racing with a call to close the pool)
-	grp, grpCtx := errgroup.WithContext(ctx)
-	for _, current := range conns {
-		// TODO: Do we need to warmup *every* address? Probably not...
-		if current.doPrewarm != nil {
-			current := current
-			grp.Go(func() error {
-				return current.doPrewarm(grpCtx, current.addr)
-			})
-		}
-	}
-	if err := grp.Wait(); err != nil {
-		return err
-	}
 
-	// Finally, we await the balancer indicating that connections
-	// are adequately healthy and usable.
+	// We must await the balancer indicating that connections
+	// are warmed up.
 
 	// TODO: This stinks, but we do it because sync.Cond does not
 	//       respect context :(
@@ -588,6 +570,7 @@ func (t *transportPool) prewarm(ctx context.Context) error {
 			return
 		}
 	}()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for {
@@ -662,7 +645,7 @@ type connection struct {
 	attrs  atomic.Pointer[attrs.Attributes]
 
 	doClose   func()
-	doPrewarm func(context.Context, string) error
+	doPrewarm func(context.Context, string, string) error
 
 	closed chan struct{}
 	// +checkatomic
@@ -705,6 +688,13 @@ func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Respon
 	}
 	addCompletionHook(resp, onFinish)
 	return resp, nil
+}
+
+func (c *connection) Prewarm(ctx context.Context) error {
+	if c.doPrewarm == nil {
+		return nil
+	}
+	return c.doPrewarm(ctx, c.scheme, c.addr)
 }
 
 func (c *connection) startRequest() bool {
