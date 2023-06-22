@@ -189,9 +189,9 @@ type defaultBalancer struct {
 	picker          picker.Factory                // +checklocksignore: mu is not required, but happens to always be held.
 	healthChecker   healthchecker.Checker         // +checklocksignore: mu is not required, but happens to always be held.
 	usabilityOracle healthchecker.UsabilityOracle // +checklocksignore: mu is not required, but happens to always be held.
-	warmMinCount    int
-	warmMinPercent  float64
-	warmMaxState    healthchecker.HealthState
+	warmMinCount    int                           // +checklocksignore: mu is not required, but happens to always be held.
+	warmMinPercent  float64                       // +checklocksignore: mu is not required, but happens to always be held.
+	warmMaxState    healthchecker.HealthState     // +checklocksignore: mu is not required, but happens to always be held.
 
 	closed chan struct{}
 	// closedErr is written before writing to closed chan, so can only be read

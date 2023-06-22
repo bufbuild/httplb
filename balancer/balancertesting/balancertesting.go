@@ -99,7 +99,7 @@ type FakeConnPool struct {
 	// method of connections created by this pool. It should be set
 	// immediately after the pool is created, before any connections
 	// are created, to avoid races.
-	Prewarm func(conn.Conn, context.Context) error
+	Prewarm func(conn.Conn, context.Context) error // +checklocksignore: mu is not required, but happens to always be held.
 
 	pickerUpdate chan struct{}
 	connsUpdate  chan struct{}
