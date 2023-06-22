@@ -82,7 +82,7 @@ type Address struct {
 	Attributes attrs.Attributes
 }
 
-type dnsSingleShotResolver struct {
+type dnsResolveProber struct {
 	resolver *net.Resolver
 	network  string
 }
@@ -110,7 +110,7 @@ func NewDNSResolver(
 	ttl time.Duration,
 ) Resolver {
 	return NewPollingResolver(
-		&dnsSingleShotResolver{
+		&dnsResolveProber{
 			resolver: resolver,
 			network:  network,
 		},
@@ -118,7 +118,7 @@ func NewDNSResolver(
 	)
 }
 
-func (r *dnsSingleShotResolver) ResolveOnce(
+func (r *dnsResolveProber) ResolveOnce(
 	ctx context.Context,
 	_, hostPort string,
 ) ([]Address, time.Duration, error) {
@@ -128,6 +128,10 @@ func (r *dnsSingleShotResolver) ResolveOnce(
 		// There is no possible better heuristic for this, unfortunately.
 		host = hostPort
 		port = ""
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		// given host is already a resolved IP address, so return as is
+		return []Address{{HostPort: hostPort}}, 0, nil
 	}
 	addresses, err := r.resolver.LookupNetIP(ctx, r.network, host)
 	if err != nil {

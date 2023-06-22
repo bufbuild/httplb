@@ -15,13 +15,15 @@ linters-settings:
   godox:
     # TODO, OPT, etc. comments are fine to commit. Use FIXME comments for
     # temporary hacks, and use godox to prevent committing them.
-    keywords: [FIXME]
+    keywords: [FIXME, NOCOMMIT]
   varnamelen:
     ignore-decls:
       - T any
       - i int
       - wg sync.WaitGroup
       - ok bool
+      - w http.ResponseWriter
+      - r *http.Request
 linters:
   enable-all: true
   disable:
@@ -57,11 +59,11 @@ issues:
     - "err113: do not define dynamic errors.*"
   exclude-rules:
     # Needlessly verbose inside of test-only code.
-    - path: (.+)_test.go
+    - path: (.+)_test\.go
       linters:
         - forcetypeassert
     # Allow clocktest within tests
-    - path: (.+)_test.go
+    - path: (.+)_test\.go
       text: "^use of `clocktest\\."
       linters:
         - forbidigo
@@ -70,3 +72,11 @@ issues:
       text: "^use of `clockwork\\."
       linters:
         - forbidigo
+    - path: client_test\.go
+      linters:
+        # These tests examine goroutines to make sure all resources
+        # are cleaned up, which doesn't work when run in parallel.
+        - paralleltest
+        # For some reason, this linter is coming up with several
+        # false positives in this file ¯\_(ツ)_/¯
+        - bodyclose

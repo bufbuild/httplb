@@ -59,10 +59,10 @@ type RoundTripperOptions struct {
 	// returns a non-nil URL for a given request, that URL represents the HTTP proxy
 	// that should be used.
 	ProxyFunc func(*http.Request) (*url.URL, error)
-	// ProxyHeadersFunc should be called, if non-nil, before sending a CONNECT
+	// ProxyConnectHeadersFunc should be called, if non-nil, before sending a CONNECT
 	// request, to query for headers to add to that request. If it returns an
 	// error, the round-trip operation should fail immediately with that error.
-	ProxyHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	ProxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
 	// MaxResponseHeaderBytes configures the maximum size of the response status
 	// line and response headers.
 	MaxResponseHeaderBytes int64
@@ -84,7 +84,7 @@ type simpleFactory struct{}
 func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperResult {
 	transport := &http.Transport{
 		Proxy:                  opts.ProxyFunc,
-		GetProxyConnectHeader:  opts.ProxyHeadersFunc,
+		GetProxyConnectHeader:  opts.ProxyConnectHeadersFunc,
 		DialContext:            opts.DialFunc,
 		ForceAttemptHTTP2:      true,
 		MaxIdleConns:           1,

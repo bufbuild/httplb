@@ -22,7 +22,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,6 +152,21 @@ func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 }
 
+func (m *mainTransport) CloseIdleConnections() {
+	var pools []*transportPool
+	func() {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		pools = make([]*transportPool, 0, len(m.pools))
+		for _, entry := range m.pools {
+			pools = append(pools, entry.pool)
+		}
+	}()
+	for _, pool := range pools {
+		pool.CloseIdleConnections()
+	}
+}
+
 // getOrCreatePool gets the transport pool for the given dest, creating one if
 // none exists. However, this refuses to create a pool, and will return nil, if
 // the transport is closed.
@@ -218,7 +232,6 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 		applyTimeout,
 		schemeConf,
 		opts,
-		m.clientOptions.resourceLeakCallback,
 		m.runningPools.Done,
 	)
 	var activity chan struct{}
@@ -330,16 +343,15 @@ type transportPoolEntry struct {
 }
 
 type transportPool struct {
-	dest                 target // +checklocksignore: mu is not required, it just happens to be held always.
-	applyRequestTimeout  func(ctx context.Context) (context.Context, context.CancelFunc)
-	roundTripperFactory  RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
-	roundTripperOptions  RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
-	pickerInitialized    chan struct{}
-	resourceLeakCallback func(req *http.Request, resp *http.Response) // +checklocksignore: mu is not required, it just happens to be held always.
-	resolverCloser       io.Closer
-	balancer             balancer.Balancer
-	closeComplete        chan struct{}
-	onClose              func()
+	dest                target // +checklocksignore: mu is not required, it just happens to be held always.
+	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
+	roundTripperFactory RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
+	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
+	pickerInitialized   chan struct{}
+	resolverCloser      io.Closer
+	balancer            balancer.Balancer
+	closeComplete       chan struct{}
+	onClose             func()
 
 	picker atomic.Pointer[picker.Picker]
 
@@ -364,19 +376,17 @@ func newTransportPool(
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	rtFactory RoundTripperFactory,
 	opts RoundTripperOptions,
-	resourceLeakCallback func(req *http.Request, resp *http.Response),
 	onClose func(),
 ) *transportPool {
 	pickerInitialized := make(chan struct{})
 	pool := &transportPool{
-		dest:                 dest,
-		applyRequestTimeout:  applyTimeout,
-		roundTripperFactory:  rtFactory,
-		roundTripperOptions:  opts,
-		pickerInitialized:    pickerInitialized,
-		resourceLeakCallback: resourceLeakCallback,
-		closeComplete:        make(chan struct{}),
-		onClose:              onClose,
+		dest:                dest,
+		applyRequestTimeout: applyTimeout,
+		roundTripperFactory: rtFactory,
+		roundTripperOptions: opts,
+		pickerInitialized:   pickerInitialized,
+		closeComplete:       make(chan struct{}),
+		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
@@ -393,12 +403,11 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 
 	result := t.roundTripperFactory.New(t.dest.scheme, address.HostPort, t.roundTripperOptions)
 	newConn := &connection{
-		scheme:               result.Scheme,
-		addr:                 address.HostPort,
-		conn:                 result.RoundTripper,
-		doPrewarm:            result.Prewarm,
-		closed:               make(chan struct{}),
-		resourceLeakCallback: t.resourceLeakCallback,
+		scheme:    result.Scheme,
+		addr:      address.HostPort,
+		conn:      result.RoundTripper,
+		doPrewarm: result.Prewarm,
+		closed:    make(chan struct{}),
 	}
 	newConn.doClose = func() {
 		if result.Close != nil {
@@ -592,6 +601,23 @@ func (t *transportPool) prewarm(ctx context.Context) error {
 	}
 }
 
+func (t *transportPool) CloseIdleConnections() {
+	t.mu.RLock()
+	conns, alreadyClosed := t.conns, t.closed
+	t.mu.RUnlock()
+	if alreadyClosed {
+		return
+	}
+	for _, leafTransport := range conns {
+		type closeIdler interface {
+			CloseIdleConnections()
+		}
+		if closer, ok := leafTransport.conn.(closeIdler); ok {
+			closer.CloseIdleConnections()
+		}
+	}
+}
+
 func (t *transportPool) close() {
 	t.mu.Lock()
 	conns, removedConns, alreadyClosed := t.conns, t.removedConns, t.closed
@@ -638,8 +664,7 @@ type connection struct {
 	doClose   func()
 	doPrewarm func(context.Context, string) error
 
-	resourceLeakCallback func(req *http.Request, resp *http.Response)
-	closed               chan struct{}
+	closed chan struct{}
 	// +checkatomic
 	outstandingRequests atomic.Int64 // negative value means closing, no more requests
 }
@@ -678,7 +703,7 @@ func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Respon
 		onFinish()
 		return nil, err
 	}
-	addCompletionHook(req, resp, onFinish, c.resourceLeakCallback)
+	addCompletionHook(resp, onFinish)
 	return resp, nil
 }
 
@@ -730,57 +755,28 @@ func (c *connection) close() {
 
 func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
 	return RoundTripperOptions{
-		DialFunc:               opts.dialFunc,
-		ProxyFunc:              opts.proxyFunc,
-		ProxyHeadersFunc:       opts.proxyHeadersFunc,
-		MaxResponseHeaderBytes: opts.maxResponseHeaderBytes,
-		IdleConnTimeout:        opts.idleConnTimeout,
-		TLSClientConfig:        opts.tlsClientConfig,
-		TLSHandshakeTimeout:    opts.tlsHandshakeTimeout,
+		DialFunc:                opts.dialFunc,
+		ProxyFunc:               opts.proxyFunc,
+		ProxyConnectHeadersFunc: opts.proxyConnectHeadersFunc,
+		MaxResponseHeaderBytes:  opts.maxResponseHeaderBytes,
+		IdleConnTimeout:         opts.idleConnTimeout,
+		TLSClientConfig:         opts.tlsClientConfig,
+		TLSHandshakeTimeout:     opts.tlsHandshakeTimeout,
 	}
 }
 
 func addCompletionHook(
-	req *http.Request,
 	resp *http.Response,
 	whenComplete func(),
-	resourceLeakCallback func(req *http.Request, resp *http.Response),
 ) {
-	var hookedBody *hookReadCloser
 	bodyWriter, isWriter := resp.Body.(io.Writer)
 	if isWriter {
-		hookedWriter := &hookReadWriteCloser{
+		resp.Body = &hookReadWriteCloser{
 			hookReadCloser: hookReadCloser{ReadCloser: resp.Body, hook: whenComplete},
 			Writer:         bodyWriter,
 		}
-		hookedBody = &hookedWriter.hookReadCloser
-		resp.Body = hookedWriter
 	} else {
-		hookedBody = &hookReadCloser{ReadCloser: resp.Body, hook: whenComplete}
-		resp.Body = hookedBody
-	}
-
-	if resourceLeakCallback != nil {
-		runtime.SetFinalizer(resp.Body, func(io.ReadCloser) {
-			if hookedBody.closed.CompareAndSwap(false, true) {
-				// If this succeeded, it means the body was not previously closed, which is a leak!
-				resourceLeakCallback(req, resp)
-			}
-		})
-		// Set resp.Body to a wrapper, so if calling code sets a finalizer, it won't
-		// overwrite the one we just set above.
-		if isWriter {
-			type wrapper struct {
-				io.ReadWriteCloser
-			}
-			//nolint:forcetypeassert // we set this above, so we know it implements this interface
-			resp.Body = &wrapper{ReadWriteCloser: resp.Body.(io.ReadWriteCloser)}
-		} else {
-			type wrapper struct {
-				io.ReadCloser
-			}
-			resp.Body = &wrapper{ReadCloser: resp.Body}
-		}
+		resp.Body = &hookReadCloser{ReadCloser: resp.Body, hook: whenComplete}
 	}
 }
 

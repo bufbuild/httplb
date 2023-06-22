@@ -108,7 +108,7 @@ func (f *defaultBalancerFactory) applyDefaults() {
 		f.healthChecker = healthchecker.NoOpChecker
 	}
 	if f.usabilityOracle == nil {
-		f.usabilityOracle = healthchecker.DefaultUsabilityOracle
+		f.usabilityOracle = healthchecker.DefaultUsabilityOracle(healthchecker.Unknown)
 	}
 }
 
