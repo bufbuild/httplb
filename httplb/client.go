@@ -74,7 +74,7 @@ func WithRootContext(ctx context.Context) ClientOption {
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
-func WithResolver(res resolver.Resolver) TargetOption {
+func WithResolver(res resolver.Factory) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.resolver = res
 	})
@@ -450,7 +450,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 }
 
 type targetOptions struct {
-	resolver                resolver.Resolver
+	resolver                resolver.Factory
 	balancer                balancer.Factory
 	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc               func(*http.Request) (*url.URL, error)

@@ -16,7 +16,6 @@ package resolver
 
 import (
 	"context"
-	"io"
 	"net"
 	"time"
 
@@ -24,30 +23,46 @@ import (
 	"github.com/bufbuild/go-http-balancer/internal"
 )
 
-// Resolver is an interface for types that provide continuous name resolution.
+// Factory is an interface for creating continuous name resolvers.
+type Factory interface {
+	// New creates a continuous resolver for the given target name. When the
+	// target is resolved into backend addresses, they are provided to the given
+	// callback.
+	//
+	// As new result sets arrive (since the set of addresses may change over
+	// time), the callback may be called repeatedly. Each time, the entire set
+	// of addresses should be supplied.
+	//
+	// The resolver may report errors in addition to or instead of addresses,
+	// but it should keep trying to resolve (and watch for changes), even in
+	// the face of errors, until it is closed or the given context is cancelled.
+	New(ctx context.Context, scheme, hostPort string, receiver Receiver) Resolver
+}
+
+// Resolver is an interface for continuous name resolution.
 type Resolver interface {
-	// Resolve the given target name. When the target is resolved into
-	// backend addresses, they are provided to the given callback.
+	// ResolveNow is a hint sent by the balancer that it may need new results.
+	// For example, if the balancer runs out of healthy hosts, it may call this
+	// method in order to try to find more healthy hosts. This is particularly
+	// likely to happen during e.g. a rolling deployment, wherein the entire
+	// pool of hosts could disappear within the span of a TTL.
 	//
-	// As new results arrive (since the set of addresses may change
-	// over time), the callback may be called repeatedly. Each time,
-	// the entire set of addresses should be supplied.
+	// This may be a no-op if it is not possible to "refresh" the result-set,
+	// for a given resolver. This method is considered to merely hint to the
+	// resolver that it should actively search for new results if it can.
 	//
-	// The returned closer will be used to stop the resolve process.
-	// Calling its Close method should free any resources (including
-	// any background goroutines) before returning. No subsequent
-	// calls to callback should be made after Close returns. The
-	// resolve process should also initiate shutting down if/when the
-	// given context is cancelled.
+	// This method should not be called after calling Close().
+	ResolveNow()
+
+	// Close closes the current resolution process. This will free any resources
+	// (including any background goroutines) before returning. No subsequent
+	// calls to callback should be made after Close returns. The resolve process
+	// should also initiate shutting down if/when the given context is
+	// cancelled.
 	//
-	// The resolver may report errors in addition to or instead of
-	// addresses. But it should keep trying to resolve (and watch
-	// for changes), even in the face of errors, until it is closed or
-	// the given context is cancelled.
-	//
-	// The resolver may pass a TTL value for the results to the callback.
-	// If a TTL value is not available, it will be zero instead.
-	Resolve(ctx context.Context, scheme, hostPort string, receiver Receiver) io.Closer
+	// Close should always be called, even when the context passed to the
+	// resolver is cancelled.
+	Close() error
 }
 
 // Receiver is a client of a resolver and receives the resolved addresses.
@@ -69,7 +84,15 @@ type ResolveProber interface {
 	// addresses corresponding to the provided scheme and hostname.
 	// The second return value specifies the TTL of the result, or 0 if there
 	// is no known TTL value.
-	ResolveOnce(ctx context.Context, scheme, hostPort string) ([]Address, time.Duration, error)
+	ResolveOnce(
+		ctx context.Context,
+		scheme,
+		hostPort string,
+	) (
+		results []Address,
+		ttl time.Duration,
+		err error,
+	)
 }
 
 // Address contains a resolved address to a host, and any attributes that may be
@@ -96,6 +119,7 @@ type pollingResolver struct {
 type pollingResolverTask struct {
 	cancel     context.CancelFunc
 	doneSignal chan struct{}
+	refreshCh  chan struct{}
 }
 
 // NewDNSResolver creates a new resolver that resolves DNS names.
@@ -108,7 +132,7 @@ func NewDNSResolver(
 	resolver *net.Resolver,
 	network string,
 	ttl time.Duration,
-) Resolver {
+) Factory {
 	return NewPollingResolver(
 		&dnsResolveProber{
 			resolver: resolver,
@@ -154,7 +178,7 @@ func (r *dnsResolveProber) ResolveOnce(
 func NewPollingResolver(
 	resolver ResolveProber,
 	defaultTTL time.Duration,
-) Resolver {
+) Factory {
 	return &pollingResolver{
 		resolver:   resolver,
 		defaultTTL: defaultTTL,
@@ -162,19 +186,26 @@ func NewPollingResolver(
 	}
 }
 
-func (r *pollingResolver) Resolve(
+func (r *pollingResolver) New(
 	ctx context.Context,
 	scheme, hostPort string,
 	receiver Receiver,
-) io.Closer {
+) Resolver {
 	ctx, cancel := context.WithCancel(ctx)
 	task := &pollingResolverTask{
 		cancel:     cancel,
 		doneSignal: make(chan struct{}),
+		refreshCh:  make(chan struct{}, 1),
 	}
 	go func() {
 		defer close(task.doneSignal)
 		defer cancel()
+		defer func() {
+			// Drain the refresh channel. This will unblock when Close() is
+			// called. Close should always be called, even if the context is
+			// cancelled first.
+			<-task.refreshCh
+		}()
 
 		timer := r.clock.NewTimer(0)
 		if !timer.Stop() {
@@ -189,6 +220,7 @@ func (r *pollingResolver) Resolve(
 				receiver.OnResolve(addresses)
 			}
 			// TODO: exponential backoff on error
+			// TODO: should exponential backoff override ResolveNow?
 
 			if ttl == 0 {
 				ttl = r.defaultTTL
@@ -201,6 +233,15 @@ func (r *pollingResolver) Resolve(
 					<-timer.Chan()
 				}
 				return
+			case <-task.refreshCh:
+				// We still want to drain the timer in this case:
+				// > Reset should be invoked only on stopped or expired timers
+				// > with drained channels.
+				// https://pkg.go.dev/time#Timer.Reset
+				if !timer.Stop() {
+					<-timer.Chan()
+				}
+				// Continue.
 			case <-timer.Chan():
 				// Continue.
 			}
@@ -209,8 +250,16 @@ func (r *pollingResolver) Resolve(
 	return task
 }
 
+func (t *pollingResolverTask) ResolveNow() {
+	select {
+	case t.refreshCh <- struct{}{}:
+	default:
+	}
+}
+
 func (t *pollingResolverTask) Close() error {
 	t.cancel()
+	close(t.refreshCh)
 	<-t.doneSignal
 	return nil
 }

@@ -370,7 +370,7 @@ type transportPool struct {
 
 func newTransportPool(
 	ctx context.Context,
-	res resolver.Resolver,
+	res resolver.Factory,
 	balancerFactory balancer.Factory,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
@@ -390,7 +390,7 @@ func newTransportPool(
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
-	pool.resolverCloser = res.Resolve(ctx, dest.scheme, dest.hostPort, pool.balancer)
+	pool.resolverCloser = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer)
 	return pool
 }
 
