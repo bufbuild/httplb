@@ -437,6 +437,26 @@ func TestNewClient_Proxy(t *testing.T) {
 	require.Equal(t, int32(1), proxyCounter.Load())
 }
 
+func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {
+	ensureGoroutinesCleanedUp(t)
+
+	ctx := context.Background()
+	addr1 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(([]byte)("got it"))
+	}))
+	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(([]byte)("don't got it"))
+	}))
+	client := makeClient(t, ctx,
+		WithBackendTarget("http", addr1),
+		WithDisallowUnconfiguredTargets(),
+	)
+
+	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
+	// addr2 is not a configured target
+	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr2), expectError("client does not allow requests to unconfigured target"))
+}
+
 //nolint:revive // linter wants ctx first, but t first is okay
 func sendGetRequest(t *testing.T, ctx context.Context, client *http.Client, url string, expectations func(*testing.T, *http.Response, error)) {
 	t.Helper()
