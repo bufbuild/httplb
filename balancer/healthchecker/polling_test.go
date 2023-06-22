@@ -106,27 +106,39 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	process := checker.New(ctx, conn, tracker)
 	advance := func(response *http.Response) {
 		t.Helper()
-		conn <- response
-		err := testClock.BlockUntilContext(ctx, 1)
-		assert.NoError(t, err)
-		testClock.Advance(interval)
+		select {
+		case conn <- response:
+			err := testClock.BlockUntilContext(ctx, 1)
+			assert.NoError(t, err)
+			testClock.Advance(interval)
+		case <-tracker:
+			t.Fatal("unexpected health state update")
+		}
+	}
+	expectState := func(expected HealthState) {
+		select {
+		case state := <-tracker:
+			assert.Equal(t, expected, state)
+		case <-ctx.Done():
+			t.Fatal("health state not updated as expected within timeout")
+		}
 	}
 
 	// Require only one passing check to become healthy initially
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
-	assert.Equal(t, Healthy, <-tracker)
+	expectState(Healthy)
 
 	// Require three failing checks to become unhealthy
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
-	assert.Equal(t, Unhealthy, <-tracker)
+	expectState(Unhealthy)
 
 	// Require two checks to become healthy again
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	close(conn)
-	assert.Equal(t, Healthy, <-tracker)
+	expectState(Healthy)
 
 	process.Close()
 }
