@@ -62,6 +62,20 @@ func (s Set) Contains(c Conn) bool {
 	return ok
 }
 
+// Equals returns true if s has the same connections as other.
+func (s Set) Equals(other Set) bool {
+	if len(s) != len(other) {
+		return false
+	}
+	for c := range s {
+		_, ok := other[c]
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // ConnectionsToSet converts a conn.Connections into a conn.Set.
 func ConnectionsToSet(conns Connections) Set {
 	set := Set{}

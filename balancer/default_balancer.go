@@ -207,6 +207,8 @@ type defaultBalancer struct {
 	// +checklocks:mu
 	latestPicker picker.Picker
 	// +checklocks:mu
+	latestUsableConns conn.Set
+	// +checklocks:mu
 	conns []conn.Conn
 	// +checklocks:mu
 	connInfo map[conn.Conn]connInfo
@@ -436,10 +438,12 @@ func (b *defaultBalancer) newPickerLocked() {
 		b.setErrorPickerLocked(errNoHealthyConnections)
 		return
 	}
-	b.latestPicker = b.picker.New(b.latestPicker, conn.ConnectionsFromSlice(usable))
-	// TODO: Configurable way to assess if pool is "warm" or not. Until it's
-	//       configurable, we consider having at least one usable connection
-	//       to be warm.
+	usableSet := conn.SliceToSet(usable)
+	if !usableSet.Equals(b.latestUsableConns) {
+		// only recreate picker if the connections actually changed
+		b.latestPicker = b.picker.New(b.latestPicker, conn.ConnectionsFromSlice(usable))
+		b.latestUsableConns = usableSet
+	}
 	b.pool.UpdatePicker(b.latestPicker, b.isWarmLocked(usable, len(b.conns)))
 }
 
