@@ -67,9 +67,9 @@ type PollingCheckerConfig struct {
 	Timeout time.Duration
 
 	// HealthyThreshold specifies the number of successful health checks needed
-	// to promote an unhealthy, degraded or unknown backend to healthy. Backends
-	// start in unknown, so this many successful health checks are required
-	// before the connection will be considered healthy.
+	// to promote an unhealthy, degraded or unknown backend to healthy. This is
+	// not used for the initial health check, so a connection will be healthy
+	// immediately if the first health check passes.
 	//
 	// Defaults to 1.
 	HealthyThreshold int
@@ -149,7 +149,12 @@ func (r *pollingChecker) New(
 	}
 
 	state := Unknown
-	counter := 0
+
+	// Start the counter off at the healthy threshold so that it can transition
+	// into healthy state in one passed check. The unhealthy threshold is not
+	// a concern since the initial state (Unknown) is already considered to be
+	// unhealthy.
+	counter := r.healthyThreshold
 
 	go func() {
 		defer close(task.doneSignal)
