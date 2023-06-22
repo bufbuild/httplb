@@ -74,7 +74,7 @@ func WithRootContext(ctx context.Context) ClientOption {
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
-func WithResolver(res resolver.Resolver) ClientOption {
+func WithResolver(res resolver.Resolver) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.resolver = res
 	})
@@ -86,7 +86,7 @@ func WithResolver(res resolver.Resolver) ClientOption {
 //
 // If not provided, the default balancer will create connections to all resolved
 // addresses and then pick connections using a round-robin strategy.
-func WithBalancer(balancerFactory balancer.Factory) ClientOption {
+func WithBalancer(balancerFactory balancer.Factory) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.balancer = balancerFactory
 	})
