@@ -348,7 +348,7 @@ type transportPool struct {
 	roundTripperFactory RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
 	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized   chan struct{}
-	resolverCloser      io.Closer
+	resolver            io.Closer
 	balancer            balancer.Balancer
 	closeComplete       chan struct{}
 	onClose             func()
@@ -370,7 +370,7 @@ type transportPool struct {
 
 func newTransportPool(
 	ctx context.Context,
-	res resolver.Resolver,
+	res resolver.Factory,
 	balancerFactory balancer.Factory,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
@@ -390,7 +390,7 @@ func newTransportPool(
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
-	pool.resolverCloser = res.Resolve(ctx, dest.scheme, dest.hostPort, pool.balancer)
+	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer)
 	return pool
 }
 
@@ -629,7 +629,7 @@ func (t *transportPool) close() {
 	}
 	// Close resolver first. This will stop any new addresses from
 	// being sent to the balancer.
-	_ = t.resolverCloser.Close()
+	_ = t.resolver.Close()
 	// Then close the balancer. This will stop calls to create and
 	// remove connections.
 	_ = t.balancer.Close()
