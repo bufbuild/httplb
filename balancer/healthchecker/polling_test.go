@@ -17,7 +17,6 @@ package healthchecker
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/bufbuild/go-http-balancer/internal/clocktest"
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPollingChecker(t *testing.T) {
