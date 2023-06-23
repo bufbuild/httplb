@@ -348,7 +348,7 @@ type transportPool struct {
 	roundTripperFactory RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
 	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized   chan struct{}
-	resolver            io.Closer
+	resolver            resolver.Resolver
 	balancer            balancer.Balancer
 	closeComplete       chan struct{}
 	onClose             func()
@@ -486,6 +486,10 @@ func (t *transportPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 	if isWarm {
 		t.warmCond.Broadcast()
 	}
+}
+
+func (t *transportPool) ResolveNow() {
+	t.resolver.ResolveNow()
 }
 
 func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error) {

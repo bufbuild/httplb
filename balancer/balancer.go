@@ -95,4 +95,9 @@ type ConnPool interface {
 	// It usually means some minimum number of connections are healthy and
 	// available for use.
 	UpdatePicker(picker picker.Picker, isWarm bool)
+	// ResolveNow requests that addresses be re-resolved immediately. This can be
+	// used by the balancer if it thinks the addresses it has may be out of date
+	// (such as if too many are failing health checks, which could be due to some
+	// addresses no longer providing the desired service).
+	ResolveNow()
 }

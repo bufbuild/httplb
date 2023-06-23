@@ -162,6 +162,9 @@ func (p *FakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 	}
 }
 
+// ResolveNow implements the balancer.ConnPool interface. It is a no-op.
+func (p *FakeConnPool) ResolveNow() {}
+
 // SnapshotConns returns a snapshot of the current active connections. This will
 // include all connections created via NewConn but not yet removed via RemoveConn.
 func (p *FakeConnPool) SnapshotConns() conn.Set {
