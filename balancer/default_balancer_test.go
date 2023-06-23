@@ -17,6 +17,7 @@ package balancer
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -200,6 +201,123 @@ func TestDefaultBalancer_HealthChecking(t *testing.T) {
 		{HostPort: "1.2.3.20"},
 	}
 	awaitPickerUpdate(t, pool, true, expectAddrs, []int{1, 2, 7})
+
+	err := balancer.Close()
+	require.NoError(t, err)
+	checkers := checker.SnapshotConns()
+	require.Empty(t, checkers)
+	require.Zero(t, activeConnMgrs())
+}
+
+func TestDefaultBalancer_WarmDefinition(t *testing.T) {
+	t.Parallel()
+	connMgrFactory, activeConnMgrs := balancertesting.DeterministicConnManagerFactory(connmanager.NewFactory())
+	checker := balancertesting.NewFakeHealthChecker()
+	factory := NewFactory(
+		WithConnManager(connMgrFactory),
+		WithPicker(balancertesting.FakePickerFactory),
+		WithHealthChecks(checker, healthchecker.NewOracle(healthchecker.Unknown)),
+		// must have at least 3 or 20% of connections (whichever is greater) warmed and healthy
+		WithWarmDefinition(3, 50, healthchecker.Healthy),
+	)
+	pool := balancertesting.NewFakeConnPool()
+	// map of host:port -> chan struct{} which is closed when that address is warm
+	var warmChans sync.Map
+	pool.Prewarm = func(c conn.Conn, ctx context.Context) error {
+		ch, ok := warmChans.Load(c.Address().HostPort)
+		if !ok {
+			return nil
+		}
+		select {
+		case <-ch.(chan struct{}):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	balancer := factory.New(context.Background(), "http", "foo.com", pool)
+
+	checker.SetInitialState(healthchecker.Unknown)
+
+	warmChan1 := make(chan struct{})
+	warmChan2 := make(chan struct{})
+	warmChan3 := make(chan struct{})
+	warmChan4 := make(chan struct{})
+	warmChans.Store("1.2.3.1", warmChan1)
+	warmChans.Store("1.2.3.2", warmChan2)
+	warmChans.Store("1.2.3.3", warmChan3)
+	warmChans.Store("1.2.3.4", warmChan4)
+	// Initial resolve
+	addrs := []resolver.Address{
+		{HostPort: "1.2.3.1"},
+		{HostPort: "1.2.3.2"},
+		{HostPort: "1.2.3.3"},
+		{HostPort: "1.2.3.4"},
+	}
+	balancer.OnResolve(addrs)
+	awaitCheckerUpdate(t, checker, addrs, []int{1, 2, 3, 4})
+	// all are included, but still not warmed up
+	awaitPickerUpdate(t, pool, false, addrs, []int{1, 2, 3, 4})
+
+	conns := pool.SnapshotConns()
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	checker.UpdateHealthState(conn1, healthchecker.Healthy)
+	checker.UpdateHealthState(conn2, healthchecker.Healthy)
+	checker.UpdateHealthState(conn3, healthchecker.Healthy)
+	// generous time for concurrent activities to complete after health states updated
+	time.Sleep(300 * time.Millisecond)
+	// should still be unhealthy
+	awaitPickerUpdate(t, pool, false, addrs, []int{1, 2, 3, 4})
+
+	// We need 3 warmed up, so 2 still not enough
+	close(warmChan1)
+	close(warmChan2)
+	// generous time for concurrent activities to complete after health states updated
+	time.Sleep(300 * time.Millisecond)
+	// should still be unhealthy
+	awaitPickerUpdate(t, pool, false, addrs, []int{1, 2, 3, 4})
+
+	// But third one's the charm
+	close(warmChan3)
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 3, 4})
+
+	// Now we'll try the other direction: connections become warm immediately, so we
+	// then are waiting for health checks to complete. This time, the minimum is
+	// 4 connections per the percent minimum (now there 8; 50% of 8 is 4).
+	addrs = []resolver.Address{
+		{HostPort: "1.2.3.05"}, // extra zero in last component so they sort lexically
+		{HostPort: "1.2.3.06"}, // and get created in exactly this order
+		{HostPort: "1.2.3.07"},
+		{HostPort: "1.2.3.08"},
+		{HostPort: "1.2.3.09"},
+		{HostPort: "1.2.3.10"},
+		{HostPort: "1.2.3.11"},
+		{HostPort: "1.2.3.12"},
+	}
+	balancer.OnResolve(addrs)
+	awaitCheckerUpdate(t, checker, addrs, []int{5, 6, 7, 8, 9, 10, 11, 12})
+	// We didn't put channels in warmChans map, so they become warm immediately.
+	// But we now have 0/4 connections healthy.
+	awaitPickerUpdate(t, pool, false, addrs, []int{5, 6, 7, 8, 9, 10, 11, 12})
+
+	conns = pool.SnapshotConns()
+	conn5 := balancertesting.FindConn(conns, addrs[0], 5)
+	conn6 := balancertesting.FindConn(conns, addrs[1], 6)
+	conn7 := balancertesting.FindConn(conns, addrs[2], 7)
+	conn8 := balancertesting.FindConn(conns, addrs[3], 8)
+	checker.UpdateHealthState(conn5, healthchecker.Healthy)
+	checker.UpdateHealthState(conn6, healthchecker.Healthy)
+	checker.UpdateHealthState(conn7, healthchecker.Healthy)
+	// generous time for concurrent activities to complete after health states updated
+	time.Sleep(300 * time.Millisecond)
+	// should still be unhealthy
+	awaitPickerUpdate(t, pool, false, addrs, []int{5, 6, 7, 8, 9, 10, 11, 12})
+
+	// When the third one turns healthy, pool is warm again
+	checker.UpdateHealthState(conn8, healthchecker.Healthy)
+	awaitPickerUpdate(t, pool, true, addrs, []int{5, 6, 7, 8, 9, 10, 11, 12})
 
 	err := balancer.Close()
 	require.NoError(t, err)
