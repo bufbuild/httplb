@@ -79,6 +79,18 @@ type RoundTripperOptions struct {
 	KeepWarm bool
 }
 
+func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
+	return RoundTripperOptions{
+		DialFunc:                opts.dialFunc,
+		ProxyFunc:               opts.proxyFunc,
+		ProxyConnectHeadersFunc: opts.proxyConnectHeadersFunc,
+		MaxResponseHeaderBytes:  opts.maxResponseHeaderBytes,
+		IdleConnTimeout:         opts.idleConnTimeout,
+		TLSClientConfig:         opts.tlsClientConfig,
+		TLSHandshakeTimeout:     opts.tlsHandshakeTimeout,
+	}
+}
+
 type simpleFactory struct{}
 
 func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperResult {

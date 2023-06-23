@@ -25,35 +25,6 @@ import (
 	"github.com/bufbuild/go-http-balancer/resolver"
 )
 
-type rendezvousSubsetter struct {
-	key  []byte
-	k    int
-	hash hash.Hash32
-}
-
-type addressHeap struct {
-	addrs []resolver.Address
-	ranks []uint32
-	key   []byte
-	hash  hash.Hash32
-}
-
-type RendezvousConfig struct {
-	// NumBackends specifies the number of backends to select out of the set of
-	// available hosts. This option is required.
-	NumBackends int
-
-	// SelectionKey specifies the key used to uniquely select hosts. This value
-	// controls which hosts get selected, thus typically you set a unique value
-	// for each program instance, using e.g. the machine host name. If not set,
-	// a random string will be used.
-	SelectionKey string
-
-	// Hash provides a hash function to use. If unspecified, an implementation
-	// of MurmurHash3 will be used.
-	Hash hash.Hash32
-}
-
 // NewRendezvous returns a subsetter that uses Rendezvous hashing to pick a
 // randomly-distributed but consistent set of k hosts provided a value to use
 // as a key. When provided the same selectionKey and k value, it will return
@@ -80,19 +51,33 @@ func NewRendezvous(options RendezvousConfig) (Subsetter, error) {
 	}, nil
 }
 
-func randomKey() (string, error) {
-	data := [16]byte{}
-	if _, err := rand.Read(data[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(data[:]), nil
+// RendezvousConfig represents the configuration options for use with NewRendezvous.
+type RendezvousConfig struct {
+	// NumBackends specifies the number of backends to select out of the set of
+	// available hosts. This option is required.
+	NumBackends int
+
+	// SelectionKey specifies the key used to uniquely select hosts. This value
+	// controls which hosts get selected, thus typically you set a unique value
+	// for each program instance, using e.g. the machine host name. If not set,
+	// a random string will be used.
+	SelectionKey string
+
+	// Hash provides a hash function to use. If unspecified, an implementation
+	// of MurmurHash3 will be used.
+	Hash hash.Hash32
+}
+
+type rendezvousSubsetter struct {
+	key  []byte
+	k    int
+	hash hash.Hash32
 }
 
 func (s *rendezvousSubsetter) ComputeSubset(addrs []resolver.Address) []resolver.Address {
 	if len(addrs) <= s.k {
 		return addrs
 	}
-
 	n, k := len(addrs), s.k
 	addrHeap := newAddressHeap(addrs[:s.k], s.key, s.hash)
 	for i := k; i < n; i++ {
@@ -103,8 +88,14 @@ func (s *rendezvousSubsetter) ComputeSubset(addrs []resolver.Address) []resolver
 			heap.Fix(addrHeap, 0)
 		}
 	}
-
 	return addrHeap.addrs
+}
+
+type addressHeap struct {
+	addrs []resolver.Address
+	ranks []uint32
+	key   []byte
+	hash  hash.Hash32
 }
 
 func newAddressHeap(addrs []resolver.Address, key []byte, hash hash.Hash32) *addressHeap {
@@ -141,3 +132,11 @@ func (h addressHeap) Swap(i, j int) {
 
 func (h *addressHeap) Push(any) { panic("Push should not be called") } //nolint:forbidigo // inaccessible code
 func (h *addressHeap) Pop() any { panic("Pop should not be called") }  //nolint:forbidigo // inaccessible code
+
+func randomKey() (string, error) {
+	data := [16]byte{}
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data[:]), nil
+}

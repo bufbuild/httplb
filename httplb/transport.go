@@ -152,6 +152,8 @@ func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 }
 
+// CloseIdleConnections is exported so that the method of the same name
+// on *[http.Client] works as expected.
 func (m *mainTransport) CloseIdleConnections() {
 	var pools []*transportPool
 	func() {
@@ -747,33 +749,6 @@ func (c *connection) close() {
 	}
 }
 
-func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
-	return RoundTripperOptions{
-		DialFunc:                opts.dialFunc,
-		ProxyFunc:               opts.proxyFunc,
-		ProxyConnectHeadersFunc: opts.proxyConnectHeadersFunc,
-		MaxResponseHeaderBytes:  opts.maxResponseHeaderBytes,
-		IdleConnTimeout:         opts.idleConnTimeout,
-		TLSClientConfig:         opts.tlsClientConfig,
-		TLSHandshakeTimeout:     opts.tlsHandshakeTimeout,
-	}
-}
-
-func addCompletionHook(
-	resp *http.Response,
-	whenComplete func(),
-) {
-	bodyWriter, isWriter := resp.Body.(io.Writer)
-	if isWriter {
-		resp.Body = &hookReadWriteCloser{
-			hookReadCloser: hookReadCloser{ReadCloser: resp.Body, hook: whenComplete},
-			Writer:         bodyWriter,
-		}
-	} else {
-		resp.Body = &hookReadCloser{ReadCloser: resp.Body, hook: whenComplete}
-	}
-}
-
 type hookReadCloser struct {
 	io.ReadCloser
 	hook func()
@@ -814,3 +789,18 @@ type hookReadWriteCloser struct {
 }
 
 var _ io.ReadWriteCloser = (*hookReadWriteCloser)(nil)
+
+func addCompletionHook(
+	resp *http.Response,
+	whenComplete func(),
+) {
+	bodyWriter, isWriter := resp.Body.(io.Writer)
+	if isWriter {
+		resp.Body = &hookReadWriteCloser{
+			hookReadCloser: hookReadCloser{ReadCloser: resp.Body, hook: whenComplete},
+			Writer:         bodyWriter,
+		}
+	} else {
+		resp.Body = &hookReadCloser{ReadCloser: resp.Body, hook: whenComplete}
+	}
+}

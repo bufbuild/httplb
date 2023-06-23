@@ -105,41 +105,43 @@ type Address struct {
 	Attributes attrs.Attributes
 }
 
-type dnsResolveProber struct {
-	resolver *net.Resolver
-	network  string
-}
-
-type pollingResolver struct {
-	resolver   ResolveProber
-	defaultTTL time.Duration
-	clock      internal.Clock
-}
-
-type pollingResolverTask struct {
-	cancel     context.CancelFunc
-	doneSignal chan struct{}
-	refreshCh  chan struct{}
-}
-
-// NewDNSResolver creates a new resolver that resolves DNS names.
+// NewDNSResolverFactory creates a new resolver that resolves DNS names.
 // You can specify which kind of network addresses to resolve with the network
 // parameter, and the resolver will return only IP addresses of the type
 // specified by network. The network must be one of "ip", "ip4" or "ip6".
 // Note that because net.Resolver does not expose the record TTL values, this
 // resolver uses the fixed TTL provided in the ttl parameter.
-func NewDNSResolver(
+func NewDNSResolverFactory(
 	resolver *net.Resolver,
 	network string,
 	ttl time.Duration,
 ) Factory {
-	return NewPollingResolver(
+	return NewPollingResolverFactory(
 		&dnsResolveProber{
 			resolver: resolver,
 			network:  network,
 		},
 		ttl,
 	)
+}
+
+// NewPollingResolverFactory creates a new resolver that polls an underlying
+// single-shot resolver whenever the result-set TTL expires. If the underlying
+// resolver does not return a TTL with the result-set, defaultTTL is used.
+func NewPollingResolverFactory(
+	prober ResolveProber,
+	defaultTTL time.Duration,
+) Factory {
+	return &pollingResolverFactory{
+		prober:     prober,
+		defaultTTL: defaultTTL,
+		clock:      internal.NewRealClock(),
+	}
+}
+
+type dnsResolveProber struct {
+	resolver *net.Resolver
+	network  string
 }
 
 func (r *dnsResolveProber) ResolveOnce(
@@ -172,94 +174,96 @@ func (r *dnsResolveProber) ResolveOnce(
 	return result, 0, nil
 }
 
-// NewPollingResolver creates a new resolver that polls an underlying
-// single-shot resolver whenever the result-set TTL expires. If the underlying
-// resolver does not return a TTL with the result-set, defaultTTL is used.
-func NewPollingResolver(
-	resolver ResolveProber,
-	defaultTTL time.Duration,
-) Factory {
-	return &pollingResolver{
-		resolver:   resolver,
-		defaultTTL: defaultTTL,
-		clock:      internal.NewRealClock(),
-	}
+type pollingResolverFactory struct {
+	prober     ResolveProber
+	defaultTTL time.Duration
+	clock      internal.Clock
 }
 
-func (r *pollingResolver) New(
+func (f *pollingResolverFactory) New(
 	ctx context.Context,
 	scheme, hostPort string,
 	receiver Receiver,
 ) Resolver {
 	ctx, cancel := context.WithCancel(ctx)
-	task := &pollingResolverTask{
+	res := &pollingResolver{
 		cancel:     cancel,
 		doneSignal: make(chan struct{}),
 		refreshCh:  make(chan struct{}, 1),
+		factory:    f,
 	}
-	go func() {
-		defer close(task.doneSignal)
-		defer cancel()
-		defer func() {
-			// Drain the refresh channel. This will unblock when Close() is
-			// called. Close should always be called, even if the context is
-			// cancelled first.
-			<-task.refreshCh
-		}()
-
-		timer := r.clock.NewTimer(0)
-		if !timer.Stop() {
-			<-timer.Chan()
-		}
-
-		for {
-			addresses, ttl, err := r.resolver.ResolveOnce(ctx, scheme, hostPort)
-			if err != nil {
-				receiver.OnResolveError(err)
-			} else {
-				receiver.OnResolve(addresses)
-			}
-			// TODO: exponential backoff on error
-			// TODO: should exponential backoff override ResolveNow?
-
-			if ttl == 0 {
-				ttl = r.defaultTTL
-			}
-			timer.Reset(ttl)
-
-			select {
-			case <-ctx.Done():
-				if !timer.Stop() {
-					<-timer.Chan()
-				}
-				return
-			case <-task.refreshCh:
-				// We still want to drain the timer in this case:
-				// > Reset should be invoked only on stopped or expired timers
-				// > with drained channels.
-				// https://pkg.go.dev/time#Timer.Reset
-				if !timer.Stop() {
-					<-timer.Chan()
-				}
-				// Continue.
-			case <-timer.Chan():
-				// Continue.
-			}
-		}
-	}()
-	return task
+	go res.run(ctx, scheme, hostPort, receiver)
+	return res
 }
 
-func (t *pollingResolverTask) ResolveNow() {
+type pollingResolver struct {
+	cancel     context.CancelFunc
+	doneSignal chan struct{}
+	refreshCh  chan struct{}
+	factory    *pollingResolverFactory
+}
+
+func (res *pollingResolver) ResolveNow() {
 	select {
-	case t.refreshCh <- struct{}{}:
+	case res.refreshCh <- struct{}{}:
 	default:
 	}
 }
 
-func (t *pollingResolverTask) Close() error {
-	t.cancel()
-	close(t.refreshCh)
-	<-t.doneSignal
+func (res *pollingResolver) Close() error {
+	res.cancel()
+	close(res.refreshCh)
+	<-res.doneSignal
 	return nil
+}
+
+func (res *pollingResolver) run(ctx context.Context, scheme, hostPort string, receiver Receiver) {
+	defer close(res.doneSignal)
+	defer res.cancel()
+	defer func() {
+		// Drain the refresh channel. This will unblock when Close() is
+		// called. Close should always be called, even if the context is
+		// cancelled first.
+		<-res.refreshCh
+	}()
+
+	timer := res.factory.clock.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.Chan()
+	}
+
+	for {
+		addresses, ttl, err := res.factory.prober.ResolveOnce(ctx, scheme, hostPort)
+		if err != nil {
+			receiver.OnResolveError(err)
+		} else {
+			receiver.OnResolve(addresses)
+		}
+		// TODO: exponential backoff on error
+		// TODO: should exponential backoff override ResolveNow?
+
+		if ttl == 0 {
+			ttl = res.factory.defaultTTL
+		}
+		timer.Reset(ttl)
+
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.Chan()
+			}
+			return
+		case <-res.refreshCh:
+			// We still want to drain the timer in this case:
+			// > Reset should be invoked only on stopped or expired timers
+			// > with drained channels.
+			// https://pkg.go.dev/time#Timer.Reset
+			if !timer.Stop() {
+				<-timer.Chan()
+			}
+			// Continue.
+		case <-timer.Chan():
+			// Continue.
+		}
+	}
 }

@@ -17,6 +17,7 @@ package healthchecker
 import (
 	"context"
 	"errors"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
 	"time"
@@ -27,34 +28,6 @@ import (
 	"github.com/bufbuild/go-http-balancer/resolver"
 	"github.com/stretchr/testify/assert"
 )
-
-type fakeConnChan chan *http.Response
-
-func (f fakeConnChan) RoundTrip(_ *http.Request, _ func()) (*http.Response, error) {
-	response := <-f
-	if response == nil {
-		return nil, errors.New("fake error")
-	}
-	return response, nil
-}
-
-func (f fakeConnChan) Scheme() string {
-	return "http"
-}
-
-func (f fakeConnChan) Address() resolver.Address {
-	return resolver.Address{HostPort: "::1"}
-}
-
-func (f fakeConnChan) UpdateAttributes(_ attrs.Attributes) {}
-
-func (f fakeConnChan) Prewarm(_ context.Context) error { return nil }
-
-type fakeHealthTracker chan HealthState
-
-func (f fakeHealthTracker) UpdateHealthState(_ conn.Conn, health HealthState) {
-	f <- health
-}
 
 func TestPollingChecker(t *testing.T) {
 	t.Parallel()
@@ -67,24 +40,27 @@ func TestPollingChecker(t *testing.T) {
 	tracker := make(fakeHealthTracker, 1)
 
 	// Unhealthy (HTTP error)
-	conn := make(fakeConnChan)
-	close(conn)
-	checker.New(ctx, conn, tracker).Close()
+	connection := make(fakeConnChan)
+	close(connection)
+	err := checker.New(ctx, connection, tracker).Close()
+	require.NoError(t, err)
 	assert.Equal(t, Unhealthy, <-tracker)
 
 	// Unhealthy (HTTP 5xx)
-	conn = make(fakeConnChan, 1)
-	conn <- &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody}
-	checker.New(ctx, conn, tracker).Close()
+	connection = make(fakeConnChan, 1)
+	connection <- &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody}
+	err = checker.New(ctx, connection, tracker).Close()
+	require.NoError(t, err)
 	assert.Equal(t, Unhealthy, <-tracker)
-	close(conn)
+	close(connection)
 
 	// Healthy (HTTP 2xx)
-	conn = make(fakeConnChan, 1)
-	conn <- &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
-	checker.New(ctx, conn, tracker).Close()
+	connection = make(fakeConnChan, 1)
+	connection <- &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
+	err = checker.New(ctx, connection, tracker).Close()
+	require.NoError(t, err)
 	assert.Equal(t, Healthy, <-tracker)
-	close(conn)
+	close(connection)
 }
 
 func TestPollingCheckerThresholds(t *testing.T) {
@@ -103,13 +79,13 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	}, NewSimpleProber("/"))
 	checker.(*pollingChecker).clock = testClock
 
-	conn := make(fakeConnChan)
+	connection := make(fakeConnChan)
 	tracker := make(fakeHealthTracker)
-	process := checker.New(ctx, conn, tracker)
+	process := checker.New(ctx, connection, tracker)
 	advance := func(response *http.Response) {
 		t.Helper()
 		select {
-		case conn <- response:
+		case connection <- response:
 			err := testClock.BlockUntilContext(ctx, 1)
 			assert.NoError(t, err)
 			testClock.Advance(interval)
@@ -139,8 +115,37 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	// Require two checks to become healthy again
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
-	close(conn)
+	close(connection)
 	expectState(Healthy)
 
-	process.Close()
+	err := process.Close()
+	require.NoError(t, err)
+}
+
+type fakeConnChan chan *http.Response
+
+func (f fakeConnChan) RoundTrip(_ *http.Request, _ func()) (*http.Response, error) {
+	response := <-f
+	if response == nil {
+		return nil, errors.New("fake error")
+	}
+	return response, nil
+}
+
+func (f fakeConnChan) Scheme() string {
+	return "http"
+}
+
+func (f fakeConnChan) Address() resolver.Address {
+	return resolver.Address{HostPort: "::1"}
+}
+
+func (f fakeConnChan) UpdateAttributes(_ attrs.Attributes) {}
+
+func (f fakeConnChan) Prewarm(_ context.Context) error { return nil }
+
+type fakeHealthTracker chan HealthState
+
+func (f fakeHealthTracker) UpdateHealthState(_ conn.Conn, health HealthState) {
+	f <- health
 }

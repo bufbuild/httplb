@@ -35,23 +35,63 @@ var (
 		KeepAlive: 30 * time.Second,
 	}
 	defaultNameTTL         = 5 * time.Minute
-	defaultResolver        = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
+	defaultResolver        = resolver.NewDNSResolverFactory(net.DefaultResolver, "ip", defaultNameTTL)
 	defaultBalancerFactory = balancer.NewFactory()
 )
 
-// ClientOption is an option used to customize the behavior of an HTTP client.
-type ClientOption interface {
-	applyToClient(*clientOptions)
+// NewClient returns a new HTTP client that uses the given options.
+func NewClient(options ...ClientOption) *http.Client {
+	var opts clientOptions
+	for _, opt := range options {
+		opt.applyToClient(&opts)
+	}
+	opts.applyDefaults()
+	opts.computeTargetOptions()
+	return &http.Client{
+		Transport:     newTransport(&opts),
+		CheckRedirect: opts.redirect,
+	}
 }
 
-// TargetOption is an option used to customize the behavior of an HTTP client
-// that can be applied to a single target or backend.
+// Close closes the given HTTP client, releasing any resources and stopping
+// any associated background goroutines.
 //
-// A TargetOption can be used as a ClientOption, in which case it applies as
-// a default for all targets.
-type TargetOption interface {
+// If the given client was not created using NewClient, this will return an
+// error.
+func Close(client *http.Client) error {
+	transport, ok := client.Transport.(*mainTransport)
+	if !ok {
+		return errors.New("client not created by this package")
+	}
+	transport.close()
+	return nil
+}
+
+// Prewarm pre-warms the given HTTP client, making sure that any targets
+// configured via WithBackendTarget have been warmed up. This ensures that
+// relevant addresses are resolved, any health checks performed, connections
+// possibly already established, etc.
+//
+// If the given client was not created using NewClient, this will return an
+// error.
+//
+// The given context should usually have a timeout, so that this step can
+// fail if it takes too long. Most warming errors manifest as excessive
+// delays vs. outright failure because the background machinery that gets
+// transports ready will keep re-trying instead of giving up and failing
+// fast.
+func Prewarm(ctx context.Context, client *http.Client) error {
+	transport, ok := client.Transport.(*mainTransport)
+	if !ok {
+		return errors.New("client not created by this package")
+	}
+	return transport.prewarm(ctx)
+}
+
+// ClientOption is an option used to customize the behavior of an HTTP client
+// that is created via NewClient.
+type ClientOption interface {
 	applyToClient(*clientOptions)
-	applyToTarget(*targetOptions)
 }
 
 // WithRootContext configures the root context used for any background
@@ -65,167 +105,6 @@ type TargetOption interface {
 func WithRootContext(ctx context.Context) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		opts.rootCtx = ctx
-	})
-}
-
-// WithResolver configures the HTTP client to use the given resolver, which
-// is how hostnames are resolved into individual addresses for the underlying
-// connections.
-//
-// If not provided, the default resolver will resolve A and AAAA records
-// using net.DefaultResolver.
-func WithResolver(res resolver.Factory) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.resolver = res
-	})
-}
-
-// WithBalancer configures the HTTP client to use the given factory to create
-// [balancer.Balancer] implementations, which are how requests are load balanced
-// to a particular target hostname.
-//
-// If not provided, the default balancer will create connections to all resolved
-// addresses and then pick connections using a round-robin strategy.
-func WithBalancer(balancerFactory balancer.Factory) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.balancer = balancerFactory
-	})
-}
-
-// WithProxy configures how the HTTP client interacts with HTTP proxies for
-// reaching remote hosts.
-//
-// The given proxyFunc returns the URL of a proxy server to use for the
-// given HTTP request. If no proxy should be used, it should return nil, nil.
-// If an error is returned, the request fails immediately with that error.
-// If a nil proxyFunc is provided, no proxy will ever be used. This can be
-// useful to disable proxies. If this function is set to nil or no
-// WithProxy option is provided, [http.ProxyFromEnvironment] will be used
-// as the proxyFunc. (Also see WithNoProxy.)
-//
-// The given onProxyConnectFunc, if non-nil, provides a way to examine the
-// response from the proxy for a CONNECT request. If the onProxyConnectFunc
-// returns an error, the request will fail immediately with that error.
-//
-// The given proxyConnectHeadersFunc, if non-nil, provides a way to supply
-// extra request headers to the proxy for a CONNECT request. The target
-// provided to this function is the "host:port" to which to connect. If no
-// extra headers should be added to the request, the function should return
-// nil, nil. If the function returns an error, the request will fail
-// immediately with that error.
-func WithProxy(
-	proxyFunc func(*http.Request) (*url.URL, error),
-	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
-) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.proxyFunc = proxyFunc
-		opts.proxyConnectHeadersFunc = proxyConnectHeadersFunc
-	})
-}
-
-// WithNoProxy returns an option that disables use of HTTP proxies.
-func WithNoProxy() TargetOption {
-	return WithProxy(
-		// never use a proxy
-		func(*http.Request) (*url.URL, error) { return nil, nil },
-		nil)
-}
-
-// WithRedirects configures how the HTTP client handles redirect responses.
-// If no such option is provided, the client will not follow any redirects.
-func WithRedirects(redirectFunc RedirectFunc) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.redirectFunc = redirectFunc
-	})
-}
-
-// RedirectFunc is a function that advises an HTTP client on whether to
-// follow a redirect. The given req is the redirected request, based on
-// the server's previous status code and "Location" header, and the given
-// via is the set of requests already issued, each resulting in a redirect.
-// The via slice is sorted oldest first, so the first element is the always
-// the original request and the last element is the latest redirect.
-//
-// See FollowRedirects.
-type RedirectFunc func(req *http.Request, via []*http.Request) error
-
-// FollowRedirects is a helper to create a RedirectFunc that will follow
-// up to the given number of redirects. If a request sequence results in more
-// redirects than the given limit, the request will fail.
-func FollowRedirects(limit int) RedirectFunc {
-	return func(req *http.Request, via []*http.Request) error {
-		if len(via) > limit {
-			return fmt.Errorf("too many redirects (> %d)", limit)
-		}
-		return nil
-	}
-}
-
-// WithDefaultTimeout limits requests that otherwise have no timeout to
-// the given timeout. Unlike WithRequestTimeout, if the request's context
-// already has a deadline, then no timeout is applied. Otherwise, the
-// given timeout is used and applies to the entire duration of the request,
-// from sending the first request byte to receiving the last response byte.
-func WithDefaultTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.defaultTimeout = duration
-		opts.requestTimeout = 0
-	})
-}
-
-// WithRequestTimeout limits all requests to the given timeout. This time
-// is the entire duration of the request, including sending the request,
-// writing the request body, waiting for a response, and consuming the
-// response body.
-func WithRequestTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.defaultTimeout = 0
-		opts.requestTimeout = duration
-	})
-}
-
-// WithDialer configures the HTTP client to use the given function to
-// establish network connections. If no WithDialer option is provided,
-// a default [net.Dialer] is used that uses a 30-second dial timeout and
-// configures the connection to use TCP keep-alive every 30 seconds.
-func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.dialFunc = dialFunc
-	})
-}
-
-// WithTLSConfig adds custom TLS configuration to the HTTP client. The
-// given config is used when using TLS to communicate with servers. The
-// given timeout is applied to the TLS handshake step. If the given timeout
-// is zero or no WithTLSConfig option is used, a default timeout of 10
-// seconds will be used.
-func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.tlsClientConfig = config
-		opts.tlsHandshakeTimeout = handshakeTimeout
-	})
-}
-
-// WithMaxResponseHeaderBytes configures the maximum size of response headers
-// to consume. If zero or if no WithMaxResponseHeaderBytes option is used, the
-// HTTP client will default to a 1 MB limit (2^20 bytes).
-func WithMaxResponseHeaderBytes(limit int) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.maxResponseHeaderBytes = int64(limit)
-	})
-}
-
-// WithIdleConnectionTimeout configures a timeout for how long an idle
-// connection will remain open. If zero or no WithIdleConnectionTimeout
-// option is used, idle connections will be left open indefinitely. If
-// backend servers or intermediary proxies/load balancers place time
-// limits on idle connections, this should be configured to be less
-// than that time limit, to prevent the client from trying to use a
-// connection could be concurrently closed by a server for being idle
-// for too long.
-func WithIdleConnectionTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.idleConnTimeout = duration
 	})
 }
 
@@ -296,53 +175,175 @@ func WithDisallowUnconfiguredTargets() ClientOption {
 	})
 }
 
-// NewClient returns a new HTTP client that uses the given options.
-func NewClient(options ...ClientOption) *http.Client {
-	var opts clientOptions
-	for _, opt := range options {
-		opt.applyToClient(&opts)
-	}
-	opts.applyDefaults()
-	opts.computeTargetOptions()
-	return &http.Client{
-		Transport:     newTransport(&opts),
-		CheckRedirect: opts.redirect,
-	}
+// TargetOption is an option used to customize the behavior of an HTTP client
+// that can be applied to a single target or backend.
+//
+// A TargetOption can be used as a ClientOption, in which case it applies as
+// a default for all targets.
+type TargetOption interface {
+	applyToClient(*clientOptions)
+	applyToTarget(*targetOptions)
 }
 
-// Close closes the given HTTP client, releasing any resources and stopping
-// any associated background goroutines.
+// WithResolver configures the HTTP client to use the given resolver, which
+// is how hostnames are resolved into individual addresses for the underlying
+// connections.
 //
-// If the given client was not created using NewClient, this will return an
-// error.
-func Close(client *http.Client) error {
-	transport, ok := client.Transport.(*mainTransport)
-	if !ok {
-		return errors.New("client not created by this package")
-	}
-	transport.close()
-	return nil
+// If not provided, the default resolver will resolve A and AAAA records
+// using net.DefaultResolver.
+func WithResolver(res resolver.Factory) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.resolver = res
+	})
 }
 
-// Prewarm pre-warms the given HTTP client, making sure that any targets
-// configured via WithBackendTarget have been warmed up. This ensures that
-// relevant addresses are resolved, any health checks performed, connections
-// possibly already established, etc.
+// WithBalancer configures the HTTP client to use the given factory to create
+// [balancer.Balancer] implementations, which are how requests are load balanced
+// to a particular target hostname.
 //
-// If the given client was not created using NewClient, this will return an
-// error.
+// If not provided, the default balancer will create connections to all resolved
+// addresses and then pick connections using a round-robin strategy.
+func WithBalancer(balancerFactory balancer.Factory) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.balancer = balancerFactory
+	})
+}
+
+// WithProxy configures how the HTTP client interacts with HTTP proxies for
+// reaching remote hosts.
 //
-// The given context should usually have a timeout, so that this step can
-// fail if it takes too long. Most warming errors manifest as excessive
-// delays vs. outright failure because the background machinery that gets
-// transports ready will keep re-trying instead of giving up and failing
-// fast.
-func Prewarm(ctx context.Context, client *http.Client) error {
-	transport, ok := client.Transport.(*mainTransport)
-	if !ok {
-		return errors.New("client not created by this package")
+// The given proxyFunc returns the URL of a proxy server to use for the
+// given HTTP request. If no proxy should be used, it should return nil, nil.
+// If an error is returned, the request fails immediately with that error.
+// If a nil proxyFunc is provided, no proxy will ever be used. This can be
+// useful to disable proxies. If this function is set to nil or no
+// WithProxy option is provided, [http.ProxyFromEnvironment] will be used
+// as the proxyFunc. (Also see WithNoProxy.)
+//
+// The given onProxyConnectFunc, if non-nil, provides a way to examine the
+// response from the proxy for a CONNECT request. If the onProxyConnectFunc
+// returns an error, the request will fail immediately with that error.
+//
+// The given proxyConnectHeadersFunc, if non-nil, provides a way to supply
+// extra request headers to the proxy for a CONNECT request. The target
+// provided to this function is the "host:port" to which to connect. If no
+// extra headers should be added to the request, the function should return
+// nil, nil. If the function returns an error, the request will fail
+// immediately with that error.
+func WithProxy(
+	proxyFunc func(*http.Request) (*url.URL, error),
+	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
+) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.proxyFunc = proxyFunc
+		opts.proxyConnectHeadersFunc = proxyConnectHeadersFunc
+	})
+}
+
+// WithNoProxy returns an option that disables use of HTTP proxies.
+func WithNoProxy() TargetOption {
+	return WithProxy(
+		// never use a proxy
+		func(*http.Request) (*url.URL, error) { return nil, nil },
+		nil)
+}
+
+// WithDefaultTimeout limits requests that otherwise have no timeout to
+// the given timeout. Unlike WithRequestTimeout, if the request's context
+// already has a deadline, then no timeout is applied. Otherwise, the
+// given timeout is used and applies to the entire duration of the request,
+// from sending the first request byte to receiving the last response byte.
+func WithDefaultTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.defaultTimeout = duration
+		opts.requestTimeout = 0
+	})
+}
+
+// WithRequestTimeout limits all requests to the given timeout. This time
+// is the entire duration of the request, including sending the request,
+// writing the request body, waiting for a response, and consuming the
+// response body.
+func WithRequestTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.defaultTimeout = 0
+		opts.requestTimeout = duration
+	})
+}
+
+// WithDialer configures the HTTP client to use the given function to
+// establish network connections. If no WithDialer option is provided,
+// a default [net.Dialer] is used that uses a 30-second dial timeout and
+// configures the connection to use TCP keep-alive every 30 seconds.
+func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.dialFunc = dialFunc
+	})
+}
+
+// WithTLSConfig adds custom TLS configuration to the HTTP client. The
+// given config is used when using TLS to communicate with servers. The
+// given timeout is applied to the TLS handshake step. If the given timeout
+// is zero or no WithTLSConfig option is used, a default timeout of 10
+// seconds will be used.
+func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.tlsClientConfig = config
+		opts.tlsHandshakeTimeout = handshakeTimeout
+	})
+}
+
+// WithMaxResponseHeaderBytes configures the maximum size of response headers
+// to consume. If zero or if no WithMaxResponseHeaderBytes option is used, the
+// HTTP client will default to a 1 MB limit (2^20 bytes).
+func WithMaxResponseHeaderBytes(limit int) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.maxResponseHeaderBytes = int64(limit)
+	})
+}
+
+// WithIdleConnectionTimeout configures a timeout for how long an idle
+// connection will remain open. If zero or no WithIdleConnectionTimeout
+// option is used, idle connections will be left open indefinitely. If
+// backend servers or intermediary proxies/load balancers place time
+// limits on idle connections, this should be configured to be less
+// than that time limit, to prevent the client from trying to use a
+// connection could be concurrently closed by a server for being idle
+// for too long.
+func WithIdleConnectionTimeout(duration time.Duration) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.idleConnTimeout = duration
+	})
+}
+
+// WithRedirects configures how the HTTP client handles redirect responses.
+// If no such option is provided, the client will not follow any redirects.
+func WithRedirects(redirectFunc RedirectFunc) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.redirectFunc = redirectFunc
+	})
+}
+
+// RedirectFunc is a function that advises an HTTP client on whether to
+// follow a redirect. The given req is the redirected request, based on
+// the server's previous status code and "Location" header, and the given
+// via is the set of requests already issued, each resulting in a redirect.
+// The via slice is sorted oldest first, so the first element is the always
+// the original request and the last element is the latest redirect.
+//
+// See FollowRedirects.
+type RedirectFunc func(req *http.Request, via []*http.Request) error
+
+// FollowRedirects is a helper to create a RedirectFunc that will follow
+// up to the given number of redirects. If a request sequence results in more
+// redirects than the given limit, the request will fail.
+func FollowRedirects(limit int) RedirectFunc {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) > limit {
+			return fmt.Errorf("too many redirects (> %d)", limit)
+		}
+		return nil
 	}
-	return transport.prewarm(ctx)
 }
 
 type clientOptionFunc func(*clientOptions)
