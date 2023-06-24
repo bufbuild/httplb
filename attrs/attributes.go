@@ -14,11 +14,15 @@
 
 package attrs
 
-// An Attributes value contains a map of attribute keys to values.
+// Attributes is a collection of type-safe custom metadata.
+// It contains a mapping of [Key] to value for any number of
+// attribute keys.
 type Attributes struct {
 	attrs map[any]any
 }
 
+// Attribute is a single custom attribute, defined by a
+// key and corresponding value.
 type Attribute struct {
 	key, value any
 }
@@ -29,7 +33,7 @@ type Attribute struct {
 //
 //	var testKey = NewKey[string]()
 //	...
-//	attrs.New(attrs.Value(testKey, "test!"))
+//	attrs.New(testKey.Value("test!"))
 func New(values ...Attribute) Attributes {
 	attrs := make(map[any]any)
 	for _, attr := range values {
@@ -38,11 +42,6 @@ func New(values ...Attribute) Attributes {
 	return Attributes{
 		attrs: attrs,
 	}
-}
-
-// Value constructs a new Attribute value, which can be passed to the [New].
-func Value[T any](key *Key[T], value T) Attribute {
-	return Attribute{key: key, value: value}
 }
 
 // GetValue retrieves a value from the attributes set. If the key is not

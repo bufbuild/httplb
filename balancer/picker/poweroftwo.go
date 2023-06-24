@@ -25,8 +25,8 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	// PowerOfTwoFactory creates pickers that pick two connections at random,
-	// then select the one with less requests.
+	// PowerOfTwoFactory creates pickers that select two connections at random
+	// and pick the one with fewer requests.
 	PowerOfTwoFactory Factory = &powerOfTwoFactory{}
 )
 

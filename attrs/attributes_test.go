@@ -29,9 +29,9 @@ func TestAttributes(t *testing.T) {
 	var testAttribute3 = attrs.NewKey[string]()
 
 	attributes := attrs.New(
-		attrs.Value(testAttribute1, "attr value 1"),
-		attrs.Value(testAttribute2, "attr value 2"),
-		attrs.Value(testAttribute1, "attr value 3"),
+		testAttribute1.Value("attr value 1"),
+		testAttribute2.Value("attr value 2"),
+		testAttribute1.Value("attr value 3"),
 	)
 
 	// Attribute value overwritten by key re-appearing later

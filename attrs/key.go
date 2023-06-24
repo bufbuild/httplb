@@ -14,9 +14,17 @@
 
 package attrs
 
+// Key is an attribute key. Applications should use NewKey to create
+// a new key for each distinct attribute. The type T is the type of
+// values this attribute can have.
 type Key[T any] struct {
 	// can't be empty or else pointers won't be distinct
 	_ bool
+}
+
+// Value constructs a new Attribute value, which can be passed to [New].
+func (k *Key[T]) Value(value T) Attribute {
+	return Attribute{key: k, value: value}
 }
 
 func NewKey[T any]() *Key[T] {

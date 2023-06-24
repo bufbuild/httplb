@@ -438,7 +438,7 @@ func (b *defaultBalancer) newPickerLocked() {
 		b.setErrorPickerLocked(errNoHealthyConnections)
 		return
 	}
-	usableSet := conn.SliceToSet(usable)
+	usableSet := conn.SetFromSlice(usable)
 	if !usableSet.Equals(b.latestUsableConns) {
 		// only recreate picker if the connections actually changed
 		b.latestPicker = b.picker.New(b.latestPicker, conn.ConnectionsFromSlice(usable))

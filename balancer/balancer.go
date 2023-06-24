@@ -76,6 +76,10 @@ type ConnPool interface {
 	// that doesn't even consider this connection before calling RemoveConn.
 	// This returns false if the given connection was not present in the pool.
 	RemoveConn(conn.Conn) bool
+	// GetConns returns a read-only snapshot of the pool's current set of
+	// connections. This will contain all conn.Conn instances created via
+	// NewConn but not yet removed via RemoveConn.
+	GetConns() conn.Connections
 	// UpdatePicker updates the picker that the connection pool should use. The
 	// picker is what selects a connection from the set of existing connections
 	// (ones created with NewConn, excluding ones removed with RemoveConn). This

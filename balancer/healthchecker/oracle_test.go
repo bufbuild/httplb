@@ -210,7 +210,7 @@ func checkConns(t *testing.T, usable []conn.Conn, states map[conn.Conn]HealthSta
 		require.LessOrEqual(t, states[c], threshold)
 	}
 	// And make sure there are no duplicates
-	set := conn.SliceToSet(usable)
+	set := conn.SetFromSlice(usable)
 	require.Equal(t, len(usable), len(set))
 }
 
