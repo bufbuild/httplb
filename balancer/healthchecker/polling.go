@@ -26,32 +26,35 @@ import (
 	"github.com/bufbuild/go-http-balancer/internal"
 )
 
-type pollingChecker struct {
-	interval     time.Duration
-	scaledJitter float64
-	timeout      time.Duration
-
-	unhealthyThreshold int
-	healthyThreshold   int
-
-	prober Prober
-	rnd    *rand.Rand
-	clock  internal.Clock
+// NewPollingChecker creates a new checker that calls a single-shot prober
+// on a fixed interval.
+func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
+	if config.PollingInterval == 0 {
+		config.PollingInterval = 15 * time.Second
+	}
+	if config.Timeout == 0 {
+		config.Timeout = config.PollingInterval
+	}
+	if config.UnhealthyThreshold == 0 {
+		config.UnhealthyThreshold = 1
+	}
+	if config.HealthyThreshold == 0 {
+		config.HealthyThreshold = 1
+	}
+	return &pollingChecker{
+		interval:           config.PollingInterval,
+		scaledJitter:       config.Jitter * float64(config.PollingInterval),
+		timeout:            config.Timeout,
+		healthyThreshold:   config.HealthyThreshold,
+		unhealthyThreshold: config.UnhealthyThreshold,
+		prober:             prober,
+		rnd:                internal.NewLockedRand(),
+		clock:              internal.NewRealClock(),
+	}
 }
 
-type pollingCheckerTask struct {
-	cancel     context.CancelFunc
-	doneSignal chan struct{}
-}
-
-// A Prober is a type that can perform single-shot healthchecks against a
-// connection.
-type Prober interface {
-	Probe(ctx context.Context, conn conn.Conn) HealthState
-}
-
-type proberFunc func(ctx context.Context, conn conn.Conn) HealthState
-
+// PollingCheckerConfig represents the configuration options when calling
+// NewPollingChecker.
 type PollingCheckerConfig struct {
 	// How often the probe is performed. Defaults to 15 seconds if zero.
 	PollingInterval time.Duration
@@ -84,31 +87,10 @@ type PollingCheckerConfig struct {
 	UnhealthyThreshold int
 }
 
-// NewPollingChecker creates a new checker that calls a single-shot prober
-// on a fixed interval.
-func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
-	if config.PollingInterval == 0 {
-		config.PollingInterval = 15 * time.Second
-	}
-	if config.Timeout == 0 {
-		config.Timeout = config.PollingInterval
-	}
-	if config.UnhealthyThreshold == 0 {
-		config.UnhealthyThreshold = 1
-	}
-	if config.HealthyThreshold == 0 {
-		config.HealthyThreshold = 1
-	}
-	return &pollingChecker{
-		interval:           config.PollingInterval,
-		scaledJitter:       config.Jitter * float64(config.PollingInterval),
-		timeout:            config.Timeout,
-		healthyThreshold:   config.HealthyThreshold,
-		unhealthyThreshold: config.UnhealthyThreshold,
-		prober:             prober,
-		rnd:                internal.NewLockedRand(),
-		clock:              internal.NewRealClock(),
-	}
+// A Prober is a type that can perform single-shot healthchecks against a
+// connection.
+type Prober interface {
+	Probe(ctx context.Context, conn conn.Conn) HealthState
 }
 
 // NewSimpleProber creates a new prober that performs an HTTP GET request to the
@@ -135,6 +117,19 @@ func NewSimpleProber(path string) Prober {
 		}
 		return Healthy
 	})
+}
+
+type pollingChecker struct {
+	interval     time.Duration
+	scaledJitter float64
+	timeout      time.Duration
+
+	unhealthyThreshold int
+	healthyThreshold   int
+
+	prober Prober
+	rnd    *rand.Rand
+	clock  internal.Clock
 }
 
 func (r *pollingChecker) New(
@@ -214,11 +209,18 @@ func (r *pollingChecker) calcJitter(interval time.Duration) time.Duration {
 	return time.Duration(float64(interval) + ((r.rnd.Float64()*2 - 1) * r.scaledJitter))
 }
 
+type pollingCheckerTask struct {
+	cancel     context.CancelFunc
+	doneSignal chan struct{}
+}
+
 func (t *pollingCheckerTask) Close() error {
 	t.cancel()
 	<-t.doneSignal
 	return nil
 }
+
+type proberFunc func(ctx context.Context, conn conn.Conn) HealthState
 
 func (f proberFunc) Probe(ctx context.Context, conn conn.Conn) HealthState {
 	return f(ctx, conn)

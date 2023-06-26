@@ -67,7 +67,7 @@ type fakeClock struct {
 	clockworkFakeClock
 }
 
-var _ FakeClock = fakeClock{nil}
+var _ FakeClock = fakeClock{}
 
 // NewTicker implements clock.Clock by re-boxing the clockwork.Ticker returned
 // by clockwork.Clock.NewTicker as a clock.Ticker. See package comment for more

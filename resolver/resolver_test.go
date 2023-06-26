@@ -25,19 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testReceiver struct {
-	onResolve      func([]Address)
-	onResolveError func(error)
-}
-
-func (r testReceiver) OnResolve(addresses []Address) {
-	r.onResolve(addresses)
-}
-
-func (r testReceiver) OnResolveError(err error) {
-	r.onResolveError(err)
-}
-
 func TestResolverTTL(t *testing.T) {
 	t.Parallel()
 
@@ -47,8 +34,8 @@ func TestResolverTTL(t *testing.T) {
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	factory := NewDNSResolver(net.DefaultResolver, "ip6", testTTL)
-	factory.(*pollingResolver).clock = testClock
+	factory := NewDNSResolverFactory(net.DefaultResolver, "ip6", testTTL)
+	factory.(*pollingResolverFactory).clock = testClock
 
 	signal := make(chan struct{})
 	resolver := factory.New(ctx, "http", "::1", testReceiver{
@@ -89,4 +76,17 @@ func TestResolverTTL(t *testing.T) {
 	waitForResolve()
 	err = testClock.BlockUntilContext(ctx, 1)
 	assert.NoError(t, err)
+}
+
+type testReceiver struct {
+	onResolve      func([]Address)
+	onResolveError func(error)
+}
+
+func (r testReceiver) OnResolve(addresses []Address) {
+	r.onResolve(addresses)
+}
+
+func (r testReceiver) OnResolveError(err error) {
+	r.onResolveError(err)
 }

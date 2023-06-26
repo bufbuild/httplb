@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package clock is a simple implementation of a clock interface compatible with
-// jonboulle/clockwork. The intent is to make the clockwork package only a
-// dependency for tests, and thus allow it to be pruned in the module graph.
 package internal
 
 import "time"
 
+// Clock is an interface that is compatible with the jonboulle/clockwork package.
+// The intent is that clockwork package only be a dependency for tests, not for
+// non-test code.
 type Clock interface {
 	After(d time.Duration) <-chan time.Time
 	Sleep(d time.Duration)
@@ -29,23 +29,27 @@ type Clock interface {
 	AfterFunc(d time.Duration, f func()) Timer
 }
 
+// Ticker is an interface covering the behavior of a [time.Ticker].
 type Ticker interface {
 	Chan() <-chan time.Time
 	Reset(d time.Duration)
 	Stop()
 }
 
+// Timer is an interface covering the behavior of a [time.Timer].
 type Timer interface {
 	Chan() <-chan time.Time
 	Reset(d time.Duration) bool
 	Stop() bool
 }
 
-type realClock struct{}
-
+// NewRealClock returns a Clock implementation where all methods
+// delegate to the corresponding function in the [time] package.
 func NewRealClock() Clock {
 	return realClock{}
 }
+
+type realClock struct{}
 
 func (realClock) After(d time.Duration) <-chan time.Time {
 	return time.After(d)
