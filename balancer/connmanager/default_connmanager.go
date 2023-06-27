@@ -17,9 +17,9 @@ package connmanager
 import (
 	"context"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/balancer/connmanager/subsetter"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 // NewFactory returns a new connection manager factory. If no options

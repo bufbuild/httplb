@@ -26,13 +26,13 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/connmanager"
-	"github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter"
-	"github.com/bufbuild/go-http-balancer/balancer/healthchecker"
-	"github.com/bufbuild/go-http-balancer/balancer/picker"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/attrs"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/balancer/connmanager"
+	"github.com/bufbuild/httplb/balancer/connmanager/subsetter"
+	"github.com/bufbuild/httplb/balancer/healthchecker"
+	"github.com/bufbuild/httplb/balancer/picker"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 //nolint:gochecknoglobals

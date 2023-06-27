@@ -14,7 +14,7 @@
 
 package subsetter
 
-import "github.com/bufbuild/go-http-balancer/resolver"
+import "github.com/bufbuild/httplb/resolver"
 
 // Subsetter represents logic to compute a static subset of resolve addresses.
 // To avoid creating N^2 connections, which happens if a client connects to all

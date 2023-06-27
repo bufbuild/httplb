@@ -19,8 +19,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/internal"
+	"github.com/bufbuild/httplb/attrs"
+	"github.com/bufbuild/httplb/internal"
 )
 
 // Factory is an interface for creating continuous name resolvers.

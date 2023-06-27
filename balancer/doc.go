@@ -250,10 +250,10 @@
 //
 // [power-of-two]: https://www.nginx.com/blog/nginx-power-of-two-choices-load-balancing-algorithm/
 // [EWMA]: https://linkerd.io/2016/03/16/beyond-round-robin-load-balancing-for-latency/
-// [Picker]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/picker#Picker
-// [ConnManager]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/connmanager#ConnManager
-// [Checker]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/healthchecker#Checker
-// [UsabilityOracle]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/healthchecker#UsabilityOracle
+// [Picker]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/picker#Picker
+// [ConnManager]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/connmanager#ConnManager
+// [Checker]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/healthchecker#Checker
+// [UsabilityOracle]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/healthchecker#UsabilityOracle
 // [Uber's Dynamic Subsetting]: https://www.uber.com/blog/better-load-balancing-real-time-dynamic-subsetting/
 // [Twitter's Deterministic Aperture]: https://blog.twitter.com/engineering/en_us/topics/infrastructure/2019/daperture-load-balancer
 // [Layer-4 Load Balancers]: https://www.nginx.com/resources/glossary/layer-4-load-balancing/

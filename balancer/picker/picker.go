@@ -17,7 +17,7 @@ package picker
 import (
 	"net/http"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/httplb/balancer/conn"
 )
 
 //nolint:gochecknoglobals

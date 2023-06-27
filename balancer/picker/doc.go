@@ -32,6 +32,6 @@
 // the face of heterogeneous backends (where the name resolution/service
 // discovery system has information about a backend's capacity).
 //
-// [Balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer#Balancer
-// [Attributes]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/attr#Attributes
+// [Balancer]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer#Balancer
+// [Attributes]: https://pkg.go.dev/github.com/bufbuild/httplb/attr#Attributes
 package picker

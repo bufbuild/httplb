@@ -21,8 +21,8 @@ import (
 	"errors"
 	"hash"
 
-	"github.com/bufbuild/go-http-balancer/balancer/internal"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/balancer/internal"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 // NewRendezvous returns a subsetter that uses Rendezvous hashing to pick a

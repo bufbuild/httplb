@@ -27,6 +27,6 @@
 //     stable results than other consistent hashing techniques, which means less
 //     disruption when list of server addresses change.
 //
-// [ConnManager]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/connmanager#ConnManager
+// [ConnManager]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/connmanager#ConnManager
 // [rendezvous-hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
 package subsetter

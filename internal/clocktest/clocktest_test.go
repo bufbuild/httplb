@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/internal"
+	"github.com/bufbuild/httplb/internal"
 )
 
 func TestNewFakeClock(t *testing.T) {

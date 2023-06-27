@@ -19,7 +19,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
+	"github.com/bufbuild/httplb/balancer/conn"
 	"github.com/stretchr/testify/require"
 )
 

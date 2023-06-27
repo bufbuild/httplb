@@ -37,5 +37,5 @@
 // selection (i.e. all connections in healthy, unknown, or degraded state
 // are usable, but prefer ones in healthy state).
 //
-// [Balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer#Balancer
+// [Balancer]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer#Balancer
 package healthchecker

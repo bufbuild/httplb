@@ -17,9 +17,9 @@ package balancer
 import (
 	"context"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/balancer/picker"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/balancer/picker"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 // Factory is what creates Balancer instances. A single balancer acts on behalf of a

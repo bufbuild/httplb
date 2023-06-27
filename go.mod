@@ -1,4 +1,4 @@
-module github.com/bufbuild/go-http-balancer
+module github.com/bufbuild/httplb
 
 go 1.19
 

@@ -14,7 +14,7 @@
 
 // Package conn provides the representation of a logical connection.
 // A connection is the primitive used for load balancing by the
-// [github.com/bufbuild/go-http-balancer/balancer] package. A single
+// [github.com/bufbuild/httplb/balancer] package. A single
 // connection generally wraps a single transport (or [http.RoundTripper])
 // to a single resolved address.
 //
@@ -26,8 +26,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/attrs"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 // Conn represents a connection to a resolved address. It is a *logical*

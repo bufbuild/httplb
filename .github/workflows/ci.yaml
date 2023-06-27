@@ -29,8 +29,8 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-http-balancer-ci-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-go-http-balancer-ci-
+          key: ${{ runner.os }}-httplb-ci-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-httplb-ci-
       - name: Test
         run: make test
       - name: Lint
