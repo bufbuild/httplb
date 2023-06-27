@@ -12,6 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package conn provides the representation of a logical connection.
+// A connection is the primitive used for load balancing by the
+// [github.com/bufbuild/go-http-balancer/balancer] package. A single
+// connection generally wraps a single transport (or [http.RoundTripper])
+// to a single resolved address.
+//
+// This package also contains some basic collections of connections:
+// a read-only array ([Connections]) and a [Set].
 package conn
 
 import (
@@ -32,7 +40,7 @@ type Conn interface {
 	RoundTrip(req *http.Request, whenDone func()) (*http.Response, error)
 	// Scheme returns the URL scheme to use with this connection.
 	Scheme() string
-	// Address is the address used by this connection.
+	// Address is the address to which this value is connected.
 	Address() resolver.Address
 	// UpdateAttributes updates the connection's address to have the given attributes.
 	UpdateAttributes(attributes attrs.Attributes)
@@ -76,8 +84,8 @@ func (s Set) Equals(other Set) bool {
 	return true
 }
 
-// ConnectionsToSet converts a conn.Connections into a conn.Set.
-func ConnectionsToSet(conns Connections) Set {
+// SetFromConnections converts a conn.Connections into a conn.Set.
+func SetFromConnections(conns Connections) Set {
 	set := Set{}
 	for i := 0; i < conns.Len(); i++ {
 		set[conns.Get(i)] = struct{}{}
@@ -85,8 +93,8 @@ func ConnectionsToSet(conns Connections) Set {
 	return set
 }
 
-// SliceToSet converts a []conn.Conn into a conn.Set.
-func SliceToSet(conns []Conn) Set {
+// SetFromSlice converts a []conn.Conn into a conn.Set.
+func SetFromSlice(conns []Conn) Set {
 	set := Set{}
 	for _, c := range conns {
 		set[c] = struct{}{}
@@ -100,6 +108,15 @@ func SliceToSet(conns []Conn) Set {
 // will be reflected in the returned value.
 func ConnectionsFromSlice(conns []Conn) Connections {
 	return connections(conns)
+}
+
+// ConnectionsFromSet converts a conn.Set to a conn.Connections.
+func ConnectionsFromSet(set Set) Connections {
+	sl := make([]Conn, 0, len(set))
+	for c := range set {
+		sl = append(sl, c)
+	}
+	return ConnectionsFromSlice(sl)
 }
 
 type connections []Conn

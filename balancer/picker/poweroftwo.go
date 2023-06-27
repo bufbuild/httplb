@@ -25,8 +25,13 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	// PowerOfTwoFactory creates pickers that pick two connections at random,
-	// then select the one with less requests.
+	// PowerOfTwoFactory creates pickers that select two connections at random
+	// and pick the one with fewer requests. This takes advantage of the
+	// [power of two random choices], which provides substantial benefits
+	// over a simple random picker and, unlike the least-loaded policy, doesn't
+	// need to maintain a heap.
+	//
+	// [power of two random choices]: http://www.eecs.harvard.edu/~michaelm/postscripts/handbook2001.pdf
 	PowerOfTwoFactory Factory = &powerOfTwoFactory{}
 )
 

@@ -27,7 +27,7 @@ import (
 
 // NewRendezvous returns a subsetter that uses Rendezvous hashing to pick a
 // randomly-distributed but consistent set of k hosts provided a value to use
-// as a key. When provided the same selectionKey and k value, it will return
+// as a key. When provided the same selection key and k value, it will return
 // the same hosts. When a host is removed, all of the requests directed to it
 // with this subsetter will be distributed randomly to other hosts in the pool.
 func NewRendezvous(options RendezvousConfig) (Subsetter, error) {

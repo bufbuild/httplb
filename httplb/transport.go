@@ -40,27 +40,13 @@ var (
 	errTryAgain          = errors.New("internal: leaf transport closed; try again")
 )
 
-// TODO: add this info (whatever's relevant/user-visible) to doc.go
-
-// This package uses a hierarchy with three-layers of transports:
+// mainTransport is the root of the transport hierarchy. For each target
+// backend (scheme + host:port), it maintains a transportPool. It
+// implements http.RoundTripper and is used as the transport for clients
+// created via NewClient.
 //
-// 1. mainTransport: This is the "top" of the hierarchy and is the
-//    http.RoundTripper used by NewClient. This transport manages a
-//    collection of other transports, grouped by URL scheme and
-//    hostname:port.
-// 2. transportPool: This provides a pool of transports for a single
-//    URL schema and hostname:port. This is the layer in which most
-//    of the features are implemented: name resolution, health
-//    checking, and load balancing (sub-setting and picking). Each
-//    transportPool manages a pool of lower-level transports, each
-//    to a potentially different resolved address.
-// 3. http.RoundTripper: The bottom of the hierarchy is a normal
-//    round tripper, such as *http.Transport. This represents a
-//    logical connection to a single resolved address. It may
-//    actually represent more than one physical connection, like
-//    when using HTTP 1.1 and multiple active requests are made
-//    to the same address.
-
+// Its implementation of RoundTrip delegates to a transportPool that
+// corresponds to the scheme + host:port in the request URL.
 type mainTransport struct {
 	rootCtx              context.Context //nolint:containedctx
 	cancel               context.CancelFunc
@@ -344,6 +330,10 @@ type transportPoolEntry struct {
 	activity chan<- struct{}
 }
 
+// transportPool is a round tripper that is actually a pool
+// of other transports. The other transports, or "connections",
+// are managed by a [balancer.Balancer]. Particular transports
+// are selected for a request by a [picker.Picker].
 type transportPool struct {
 	dest                target // +checklocksignore: mu is not required, it just happens to be held always.
 	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -459,6 +449,18 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 	t.removedConns = append(t.removedConns, c)
 	go c.close()
 	return true
+}
+
+func (t *transportPool) Conns() conn.Connections {
+	t.mu.RLock()
+	conns := t.conns
+	t.mu.RUnlock()
+	// must convert []*connection to []conn.Conn
+	slice := make([]conn.Conn, len(conns))
+	for i := range conns {
+		slice[i] = conns[i]
+	}
+	return conn.ConnectionsFromSlice(slice)
 }
 
 func (t *transportPool) connClosed(closedConn conn.Conn) {

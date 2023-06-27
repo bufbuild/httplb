@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package balancertesting provides some helper functions and types that
+// can be useful when testing custom load balancer implementations.
 package balancertesting
 
 import (
@@ -162,6 +164,14 @@ func (p *FakeConnPool) RemoveConn(toRemove conn.Conn) bool {
 	return true
 }
 
+// GetConns implements the balancer.ConnPool interface. It returns a
+// snapshot of the pool's set of active connections.
+func (p *FakeConnPool) Conns() conn.Connections {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return conn.ConnectionsFromSet(p.active)
+}
+
 // UpdatePicker implements the balancer.ConnPool interface. Test code can
 // asynchronously await a call to UpdatePicker using the AwaitPickerUpdate method.
 func (p *FakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
@@ -249,7 +259,7 @@ type FakePicker struct {
 
 // NewFakePicker constructs a new FakePicker with the given connections.
 func NewFakePicker(conns conn.Connections) *FakePicker {
-	return &FakePicker{Conns: conn.ConnectionsToSet(conns)}
+	return &FakePicker{Conns: conn.SetFromConnections(conns)}
 }
 
 // Pick implements the picker.Picker interface.

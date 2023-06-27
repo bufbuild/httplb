@@ -23,6 +23,7 @@ import (
 
 //nolint:gochecknoglobals
 var (
+	// RandomFactory creates pickers that picks a connections at random.
 	RandomFactory Factory = &randomFactory{}
 )
 

@@ -142,10 +142,10 @@ func TestDefaultConnManager(t *testing.T) {
 	})
 	attrKey1 := attrs.NewKey[int]()
 	attrKey2 := attrs.NewKey[string]()
-	attrs1 := attrs.New(attrs.Value(attrKey1, 101))
-	attrs2 := attrs.New(attrs.Value(attrKey1, 201))
-	attrs3 := attrs.New(attrs.Value(attrKey1, 301))
-	attrs4 := attrs.New(attrs.Value(attrKey1, 401), attrs.Value(attrKey2, "abc"))
+	attrs1 := attrs.New(attrKey1.Value(101))
+	attrs2 := attrs.New(attrKey1.Value(201))
+	attrs3 := attrs.New(attrKey1.Value(301))
+	attrs4 := attrs.New(attrKey1.Value(401), attrKey2.Value("abc"))
 	addrs = []resolver.Address{
 		{HostPort: "1.2.3.1", Attributes: attrs1},
 		{HostPort: "1.2.3.2", Attributes: attrs2},
