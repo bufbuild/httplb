@@ -24,8 +24,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/balancer"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/balancer"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 //nolint:gochecknoglobals

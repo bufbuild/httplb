@@ -1,10 +1,10 @@
-# Go HTTP Balancer
+# Go HTTP Client-Side Load Balancing
 
-[![Build](https://github.com/bufbuild/go-http-balancer/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/bufbuild/go-http-balancer/actions/workflows/ci.yaml)
-[![Report Card](https://goreportcard.com/badge/github.com/bufbuild/go-http-balancer)](https://goreportcard.com/report/github.com/bufbuild/go-http-balancer)
-[![GoDoc](https://pkg.go.dev/badge/github.com/bufbuild/go-http-balancer.svg)](https://pkg.go.dev/github.com/bufbuild/go-http-balancer)
+[![Build](https://github.com/bufbuild/httplb/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/bufbuild/httplb/actions/workflows/ci.yaml)
+[![Report Card](https://goreportcard.com/badge/github.com/bufbuild/httplb)](https://goreportcard.com/report/github.com/bufbuild/httplb)
+[![GoDoc](https://pkg.go.dev/badge/github.com/bufbuild/httplb.svg)](https://pkg.go.dev/github.com/bufbuild/httplb)
 
-[`httlb`](https://pkg.go.dev/github.com/bufbuild/go-http-balancer/httplb)
+[`httlb`](https://pkg.go.dev/github.com/bufbuild/httplb)
 provides client-side load balancing for `net/http` clients. By default,
 clients are designed for server-to-server and RPC workloads:
 

@@ -17,8 +17,8 @@ package healthchecker
 import (
 	"math"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/internal"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/internal"
 )
 
 // The UsabilityOracle decides which connections are usable. Given the set

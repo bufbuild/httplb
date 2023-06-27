@@ -17,8 +17,8 @@ package connmanager
 import (
 	"context"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/resolver"
 )
 
 // Factory is used to build ConnManager instances.

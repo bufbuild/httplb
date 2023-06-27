@@ -18,11 +18,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/balancer/balancertesting"
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	. "github.com/bufbuild/go-http-balancer/balancer/connmanager"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/attrs"
+	"github.com/bufbuild/httplb/balancer/balancertesting"
+	"github.com/bufbuild/httplb/balancer/conn"
+	. "github.com/bufbuild/httplb/balancer/connmanager"
+	"github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/require"
 )
 

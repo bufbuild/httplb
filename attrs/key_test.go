@@ -17,7 +17,7 @@ package attrs_test
 import (
 	"testing"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
+	"github.com/bufbuild/httplb/attrs"
 	"github.com/stretchr/testify/assert"
 )
 

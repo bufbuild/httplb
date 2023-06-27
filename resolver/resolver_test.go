@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/internal/clocktest"
+	"github.com/bufbuild/httplb/internal/clocktest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

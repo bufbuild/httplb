@@ -100,6 +100,6 @@
 // over plaintext, also called "h2c". In addition to supporting "http" and
 // "https" URL schemes, this package also supports "h2c" as a URL scheme.
 //
-// [name resolver]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/resolver
-// [load balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer
+// [name resolver]: https://pkg.go.dev/github.com/bufbuild/httplb/resolver
+// [load balancer]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer
 package httplb

@@ -43,7 +43,7 @@
 // to send more traffic to an address that has more available resources, such as
 // more compute, memory, or network bandwidth).
 //
-// [resolved address]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/resolver#Address
-// [Custom resolvers]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/resolver#Resolver
-// [custom picker]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/picker#Picker
+// [resolved address]: https://pkg.go.dev/github.com/bufbuild/httplb/resolver#Address
+// [Custom resolvers]: https://pkg.go.dev/github.com/bufbuild/httplb/resolver#Resolver
+// [custom picker]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/picker#Picker
 package attrs

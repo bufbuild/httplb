@@ -14,7 +14,7 @@
 
 package subsetter
 
-import "github.com/bufbuild/go-http-balancer/resolver"
+import "github.com/bufbuild/httplb/resolver"
 
 //nolint:gochecknoglobals
 var (

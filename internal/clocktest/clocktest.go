@@ -27,7 +27,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/internal"
+	"github.com/bufbuild/httplb/internal"
 	"github.com/jonboulle/clockwork"
 )
 

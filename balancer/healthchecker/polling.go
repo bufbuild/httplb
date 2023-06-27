@@ -22,8 +22,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/internal"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/internal"
 )
 
 // NewPollingChecker creates a new checker that calls a single-shot prober

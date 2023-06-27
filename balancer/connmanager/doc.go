@@ -32,6 +32,6 @@
 // for static subsetting; more sophisticated subsetting would require a new
 // implementation of ConnManager.
 //
-// [Balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer#Balancer
-// [Subsetter]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/connmanager/subsetter#Subsetter
+// [Balancer]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer#Balancer
+// [Subsetter]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer/connmanager/subsetter#Subsetter
 package connmanager

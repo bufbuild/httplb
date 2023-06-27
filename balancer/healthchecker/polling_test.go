@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bufbuild/go-http-balancer/attrs"
-	"github.com/bufbuild/go-http-balancer/balancer/conn"
-	"github.com/bufbuild/go-http-balancer/internal/clocktest"
-	"github.com/bufbuild/go-http-balancer/resolver"
+	"github.com/bufbuild/httplb/attrs"
+	"github.com/bufbuild/httplb/balancer/conn"
+	"github.com/bufbuild/httplb/internal/clocktest"
+	"github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
