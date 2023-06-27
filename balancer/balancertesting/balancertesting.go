@@ -166,7 +166,7 @@ func (p *FakeConnPool) RemoveConn(toRemove conn.Conn) bool {
 
 // GetConns implements the balancer.ConnPool interface. It returns a
 // snapshot of the pool's set of active connections.
-func (p *FakeConnPool) GetConns() conn.Connections {
+func (p *FakeConnPool) Conns() conn.Connections {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return conn.ConnectionsFromSet(p.active)

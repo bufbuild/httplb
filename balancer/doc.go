@@ -132,7 +132,7 @@
 // it once. But the [Balancer] *must* call the ConnPool's UpdatePicker method
 // at least once. The transport cannot be used without a picker.
 //
-// Though ConnPool has a GetConns method, it is not guaranteed to be cheap (it
+// Though ConnPool has a Conns method, it is not guaranteed to be cheap (it
 // may have to allocate a slice and compute a snapshot). That and the fact that
 // the balancer must be thread-safe and thus have its own internal synchronization
 // mean that balancer implementations should generally keep their own data
@@ -211,13 +211,13 @@
 //     when randomly picking two hosts, and then using the one with fewer outstanding
 //     requests.
 //
-//     This is very similar to the provided subsetter and power-of-two picker. But it
-//     needs to know the number of client processes, too. So this would likely need to be
-//     a custom subsetter implementation that shares state with a custom picker factory,
-//     so the picker considers the right weights. If the subsetting needs to be dynamic,
-//     where the number of client processes changes over time, and the ring coordinates
-//     need to update dynamically when that happens, this would require a custom
-//     [ConnManager] implementation.
+//     This is very similar to the provided subsetter and power-of-two picker, but it
+//     needs to know the number of client processes, too. Therefore this would likely need
+//     to be a custom subsetter implementation that shares state with a custom picker
+//     factory, so the picker considers the right weights. If the subsetting needs to be
+//     dynamic, where the number of client processes changes over time, and the ring
+//     coordinates need to update dynamically when that happens, this would require a
+//     custom [ConnManager] implementation.
 //
 //   - [Layer-4 Load Balancers]: When load balancers are used, the name resolver typically
 //     provides just a single address: a "virtual IP" for the load balancer. Often that is

@@ -29,7 +29,7 @@
 // should be made. It then reconciles the subset results against the set of
 // existing connections to decide what new ones should be created or which
 // should be closed. The [Subsetter] interface is very simple and only allows
-// for static subsetting. More sophisticated subsetting would require a new
+// for static subsetting; more sophisticated subsetting would require a new
 // implementation of ConnManager.
 //
 // [Balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer#Balancer

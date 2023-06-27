@@ -42,22 +42,23 @@
 // http.DefaultClient in the following key ways:
 //
 //  1. The client will re-resolve addresses in DNS every 5 minutes.
-//     The default client does not re-resolve predictably.
+//     The http.DefaultClient does not re-resolve predictably.
 //
 //  2. The client will route requests in a round-robin fashion to all
 //     addresses returned by the DNS system (both A and AAAA records).
-//     even with HTTP/2. The default client will use only a single
-//     connection if it can, even if DNS resolves many addresses. With
-//     HTTP 1.1, it will create additional connections to handle multiple
-//     concurrent requests (since an HTTP 1.1 connection can only service
-//     one request at a time). But with HTTP/2, it likely will *never*
-//     use additional connections: it only creates another connection if
-//     the concurrency limit exceeds the server's "max concurrent streams"
-//     (which the server provides when the connection is initially
-//     established and is typically on the order of 100).
+//     even with HTTP/2. The http.DefaultClient, however, will use only
+//     a single connection if it can, even if DNS resolves many addresses.
+//     With HTTP 1.1, it will create additional connections to handle
+//     multiple concurrent requests (since an HTTP 1.1 connection can only
+//     service one request at a time). But with HTTP/2, it likely will
+//     *never* use additional connections: it only creates another
+//     connection if the concurrency limit exceeds the server's
+//     "max concurrent streams" (which the server provides when the
+//     connection is initially established and is typically on the order
+//     of 100).
 //
-// The above options alone should make the client distribute load to
-// backends in a much more appropriate way, especially when using HTTP/2.
+// The above options alone should make the `httplb` client distribute load
+// to backends in a much more appropriate way, especially when using HTTP/2.
 // But the real power of a client returned by this package is that it
 // can be customized with different name resolution and load balancing
 // strategies, via the [WithResolver] and [WithBalancer] options,
@@ -82,11 +83,22 @@
 //  3. The bottom of the hierarchy, the "leaf" transports, are just
 //     http.RoundTripper implementations that each represent a single,
 //     logical connection to a single resolved address. A leaf transport
-//     could actually consist of than one *physical* connection, like
-//     when using HTTP 1.1 and multiple active requests are made
-//     to the same leaf transport. This level of transport is often an
-//     *http.Transport, that handles physical connections to the remote
-//     host and implements the actual HTTP protocol.
+//     could actually consist of more than one *physical* connection, like
+//     when using HTTP 1.1 and multiple active requests are made to the same
+//     leaf transport. This level of transport is often an *http.Transport,
+//     that handles physical connections to the remote host and implements
+//     the actual HTTP protocol.
+//
+// # Custom Transports
+//
+// One of the options in this package, [WithRoundTripperFactory], allows
+// users to implement custom transports and select them using custom URL
+// schemes. This could be used, for example, to enable HTTP/3 with a URL
+// like "http3://...".
+//
+// This package even uses this capability to provide simple use of HTTP/2
+// over plaintext, also called "h2c". In addition to supporting "http" and
+// "https" URL schemes, this package also supports "h2c" as a URL scheme.
 //
 // [name resolver]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/resolver
 // [load balancer]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer

@@ -451,7 +451,7 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 	return true
 }
 
-func (t *transportPool) GetConns() conn.Connections {
+func (t *transportPool) Conns() conn.Connections {
 	t.mu.RLock()
 	conns := t.conns
 	t.mu.RUnlock()

@@ -23,9 +23,9 @@
 //     but instead returns the entire set of addresses. Using this will cause
 //     a [ConnManager] to establish connections to every resolved address.
 //  2. NewRendezvous: This function returns a subsetter that uses [rendezvous-hashing]
-//     to compute a static subset of the given size. The key that represents the
-//     client (for picking a range of addresses on a hash ring) is 128-bits that
-//     are generated using [crypto/rand].
+//     to compute a static subset of the given size. This algorithm produces more
+//     stable results than other consistent hashing techniques, which means less
+//     disruption when list of server addresses change.
 //
 // [ConnManager]: https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer/connmanager#ConnManager
 // [rendezvous-hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing

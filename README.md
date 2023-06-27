@@ -4,19 +4,21 @@
 [![Report Card](https://goreportcard.com/badge/github.com/bufbuild/go-http-balancer)](https://goreportcard.com/report/github.com/bufbuild/go-http-balancer)
 [![GoDoc](https://pkg.go.dev/badge/github.com/bufbuild/go-http-balancer.svg)](https://pkg.go.dev/github.com/bufbuild/go-http-balancer)
 
-Go HTTP Balancer is a library that provides client-side load balancing
-functionality on top of Go's built-in `net/http` client.
+[`httlb`](https://pkg.go.dev/github.com/bufbuild/go-http-balancer/httplb)
+provides client-side load balancing for `net/http` clients. By default,
+clients are designed for server-to-server and RPC workloads:
 
-The main entry-point is the [`httlb`](https://pkg.go.dev/github.com/bufbuild/go-http-balancer/httplb)
-package, which provides functions for creating a `Client`. There are numerous options for
-controlling the behavior of the client. The options allow you to customize how the
-underlying transports are configured as well as how the client resolves names into
-addresses and performs load balancing.
+* They support HTTP/1.1, HTTP/2, and h2c.
+* They periodically re-resolve names using DNS.
+* They use a round-robin load balancing policy.
 
-The other packages provide supporting constructs and abstractions for customizable
-name resolution and load balancing, in the [`resolver`](https://pkg.go.dev/github.com/bufbuild/go-http-balancer/resolver)
-and [`balancer`](https://pkg.go.dev/github.com/bufbuild/go-http-balancer/balancer)
-sub-packages respectively.
+Random, fewest-pending, and power-of-two load balancing policies are also available.
+Clients with more complex needs can customize the underlying transports, name
+resolution, and load balancing. They can also add subsetting and active health
+checking.
+
+`httplb` takes care to build all this functionality underneath the standard library's
+`*http.Client`, so `httplb` is usable anywhere you're currently using `net/http`.
 
 ## Status: Alpha
 
