@@ -26,10 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bufbuild/httplb/attrs"
 	"github.com/bufbuild/httplb/balancer"
-	"github.com/bufbuild/httplb/balancer/conn"
-	"github.com/bufbuild/httplb/balancer/picker"
 	"github.com/bufbuild/httplb/internal"
 	"github.com/bufbuild/httplb/resolver"
 	"golang.org/x/sync/errgroup"
@@ -345,7 +342,7 @@ type transportPool struct {
 	closeComplete       chan struct{}
 	onClose             func()
 
-	picker atomic.Pointer[picker.Picker]
+	picker atomic.Pointer[balancer.Picker]
 
 	mu sync.RWMutex
 	// +checklocks:mu
@@ -386,7 +383,7 @@ func newTransportPool(
 	return pool
 }
 
-func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
+func (t *transportPool) NewConn(address resolver.Address) (balancer.Conn, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
@@ -423,7 +420,7 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 	return newConn, true
 }
 
-func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
+func (t *transportPool) RemoveConn(toRemove balancer.Conn) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// make copy of t.conns that has toRemove omitted
@@ -451,19 +448,19 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 	return true
 }
 
-func (t *transportPool) Conns() conn.Connections {
+func (t *transportPool) Conns() balancer.Conns {
 	t.mu.RLock()
 	conns := t.conns
 	t.mu.RUnlock()
 	// must convert []*connection to []conn.Conn
-	slice := make([]conn.Conn, len(conns))
+	slice := make([]balancer.Conn, len(conns))
 	for i := range conns {
 		slice[i] = conns[i]
 	}
-	return conn.ConnectionsFromSlice(slice)
+	return balancer.ConnsFromSlice(slice)
 }
 
-func (t *transportPool) connClosed(closedConn conn.Conn) {
+func (t *transportPool) connClosed(closedConn balancer.Conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// make copy of t.removedConns that has closedConn omitted
@@ -481,7 +478,7 @@ func (t *transportPool) connClosed(closedConn conn.Conn) {
 	t.removedConns = newRemovedConns
 }
 
-func (t *transportPool) UpdatePicker(picker picker.Picker, isWarm bool) {
+func (t *transportPool) UpdatePicker(picker balancer.Picker, isWarm bool) {
 	if t.picker.CompareAndSwap(nil, &picker) {
 		close(t.pickerInitialized)
 	} else {
@@ -531,7 +528,7 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	})
 }
 
-func (t *transportPool) getConnection(request *http.Request) (conn.Conn, func(), error) {
+func (t *transportPool) getConnection(request *http.Request) (balancer.Conn, func(), error) {
 	pickerPtr := t.picker.Load()
 
 	if pickerPtr == nil {
@@ -650,7 +647,7 @@ type connection struct {
 	scheme string
 	addr   string
 	conn   http.RoundTripper
-	attrs  atomic.Pointer[attrs.Attributes]
+	attrs  atomic.Pointer[resolver.Attrs]
 
 	doClose   func()
 	doPrewarm func(context.Context, string, string) error
@@ -672,7 +669,7 @@ func (c *connection) Address() resolver.Address {
 	return addr
 }
 
-func (c *connection) UpdateAttributes(attributes attrs.Attributes) {
+func (c *connection) UpdateAttributes(attributes resolver.Attrs) {
 	c.attrs.Store(&attributes)
 }
 

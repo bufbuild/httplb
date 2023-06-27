@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/httplb/balancer"
+	"github.com/bufbuild/httplb/basebalancer"
 	"github.com/bufbuild/httplb/resolver"
 )
 
@@ -36,7 +37,7 @@ var (
 	}
 	defaultNameTTL         = 5 * time.Minute
 	defaultResolver        = resolver.NewDNSResolverFactory(net.DefaultResolver, "ip", defaultNameTTL)
-	defaultBalancerFactory = balancer.NewFactory()
+	defaultBalancerFactory = basebalancer.NewFactory()
 )
 
 // NewClient returns a new HTTP client that uses the given options.

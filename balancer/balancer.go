@@ -17,8 +17,6 @@ package balancer
 import (
 	"context"
 
-	"github.com/bufbuild/httplb/balancer/conn"
-	"github.com/bufbuild/httplb/balancer/picker"
 	"github.com/bufbuild/httplb/resolver"
 )
 
@@ -69,17 +67,17 @@ type ConnPool interface {
 	// attributes. Does not block for network connections to be established.
 	// Second return value will be false if a connection could not be created
 	// because the pool is closed or closing.
-	NewConn(resolver.Address) (conn.Conn, bool)
+	NewConn(resolver.Address) (Conn, bool)
 	// RemoveConn removes the given connection. The balancer must arrange for
 	// the picker to not return the given connection for any operations after
 	// this is called. It may, for example, call UpdatePicker with a new picker
 	// that doesn't even consider this connection before calling RemoveConn.
 	// This returns false if the given connection was not present in the pool.
-	RemoveConn(conn.Conn) bool
+	RemoveConn(Conn) bool
 	// Conns returns a read-only snapshot of the pool's current set of
 	// connections. This will contain all conn.Conn instances created via
 	// NewConn but not yet removed via RemoveConn.
-	Conns() conn.Connections
+	Conns() Conns
 	// UpdatePicker updates the picker that the connection pool should use. The
 	// picker is what selects a connection from the set of existing connections
 	// (ones created with NewConn, excluding ones removed with RemoveConn). This
@@ -98,7 +96,7 @@ type ConnPool interface {
 	// The concept of "warmed up" is therefore up to the balancer implementation.
 	// It usually means some minimum number of connections are healthy and
 	// available for use.
-	UpdatePicker(picker picker.Picker, isWarm bool)
+	UpdatePicker(picker Picker, isWarm bool)
 	// ResolveNow requests that addresses be re-resolved immediately. This can be
 	// used by the balancer if it thinks the addresses it has may be out of date
 	// (such as if too many are failing health checks, which could be due to some
