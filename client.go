@@ -24,7 +24,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/bufbuild/httplb/balancer"
+	"github.com/bufbuild/httplb/health"
+	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
 )
 
@@ -34,56 +35,61 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	defaultNameTTL         = 5 * time.Minute
-	defaultResolver        = resolver.NewDNSResolverFactory(net.DefaultResolver, "ip", defaultNameTTL)
-	defaultBalancerFactory = balancer.NewFactory()
+	defaultNameTTL  = 5 * time.Minute
+	defaultResolver = resolver.NewDNSResolverFactory(net.DefaultResolver, "ip", defaultNameTTL)
 )
 
+// Client is an HTTP client that includes client-side load balancing logic. It
+// embeds a standard *[http.Client] and exposes some additional operations.
+//
+// If working with a library that requires an *[http.Client], simply use the
+// embedded Client field. If working with a library that requires an
+// [http.RoundTripper], use the Transport field.
+type Client struct {
+	*http.Client
+}
+
 // NewClient returns a new HTTP client that uses the given options.
-func NewClient(options ...ClientOption) *http.Client {
+func NewClient(options ...ClientOption) *Client {
 	var opts clientOptions
 	for _, opt := range options {
 		opt.applyToClient(&opts)
 	}
 	opts.applyDefaults()
 	opts.computeTargetOptions()
-	return &http.Client{
-		Transport:     newTransport(&opts),
-		CheckRedirect: opts.redirect,
+	return &Client{
+		Client: &http.Client{
+			Transport:     newTransport(&opts),
+			CheckRedirect: opts.redirect,
+		},
 	}
 }
 
-// Close closes the given HTTP client, releasing any resources and stopping
+// Close closes the HTTP client, releasing any resources and stopping
 // any associated background goroutines.
-//
-// If the given client was not created using NewClient, this will return an
-// error.
-func Close(client *http.Client) error {
-	transport, ok := client.Transport.(*mainTransport)
+func (c *Client) Close() error {
+	transport, ok := c.Transport.(*mainTransport)
 	if !ok {
-		return errors.New("client not created by this package")
+		return errors.New("client not created by httplb.NewClient")
 	}
 	transport.close()
 	return nil
 }
 
-// Prewarm pre-warms the given HTTP client, making sure that any targets
-// configured via WithBackendTarget have been warmed up. This ensures that
-// relevant addresses are resolved, any health checks performed, connections
-// possibly already established, etc.
-//
-// If the given client was not created using NewClient, this will return an
-// error.
+// Prewarm pre-warms the HTTP client, making sure that any targets configured
+// via WithBackendTarget have been warmed up. This ensures that relevant
+// addresses are resolved, any health checks performed, connections eagerly
+// established where possible, etc.
 //
 // The given context should usually have a timeout, so that this step can
 // fail if it takes too long. Most warming errors manifest as excessive
 // delays vs. outright failure because the background machinery that gets
 // transports ready will keep re-trying instead of giving up and failing
 // fast.
-func Prewarm(ctx context.Context, client *http.Client) error {
-	transport, ok := client.Transport.(*mainTransport)
+func (c *Client) Prewarm(ctx context.Context) error {
+	transport, ok := c.Transport.(*mainTransport)
 	if !ok {
-		return errors.New("client not created by this package")
+		return errors.New("client not created by httplb.NewClient")
 	}
 	return transport.prewarm(ctx)
 }
@@ -197,15 +203,24 @@ func WithResolver(res resolver.Factory) TargetOption {
 	})
 }
 
-// WithBalancer configures the HTTP client to use the given factory to create
-// [balancer.Balancer] implementations, which are how requests are load balanced
-// to a particular target hostname.
-//
-// If not provided, the default balancer will create connections to all resolved
-// addresses and then pick connections using a round-robin strategy.
-func WithBalancer(balancerFactory balancer.Factory) TargetOption {
+// WithPicker configures the HTTP client to use the given picker.Factory.
+// The factory is used to create a new picker every time the set of usable
+// connections changes for a target.
+func WithPicker(picker picker.Factory) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
-		opts.balancer = balancerFactory
+		opts.picker = picker
+	})
+}
+
+// WithHealthChecks configures the HTTP client to use the given health
+// checker. This provides details about which resolved addresses are
+// healthy or not.
+//
+// If no such option is given, then no health checking is done and all
+// connections will be considered healthy.
+func WithHealthChecks(checker health.Checker) TargetOption {
+	return targetOptionFunc(func(opts *targetOptions) {
+		opts.healthChecker = checker
 	})
 }
 
@@ -452,7 +467,8 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 
 type targetOptions struct {
 	resolver                resolver.Factory
-	balancer                balancer.Factory
+	picker                  picker.Factory
+	healthChecker           health.Checker
 	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc               func(*http.Request) (*url.URL, error)
 	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
@@ -469,8 +485,11 @@ func (opts *targetOptions) applyDefaults() {
 	if opts.resolver == nil {
 		opts.resolver = defaultResolver
 	}
-	if opts.balancer == nil {
-		opts.balancer = defaultBalancerFactory
+	if opts.picker == nil {
+		opts.picker = picker.RoundRobinFactory
+	}
+	if opts.healthChecker == nil {
+		opts.healthChecker = health.NoOpChecker
 	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext

@@ -106,7 +106,7 @@ func TestNewClient_MultipleTargets(t *testing.T) {
 	}
 	sentGroup.Wait()
 	t.Logf("Number of goroutines after HTTP client created and used: %d", runtime.NumGoroutine())
-	err := Close(client)
+	err := client.Close()
 	require.NoError(t, err)
 	// After Close(client) returns, all outstanding requests are done. The finished counter
 	// is updated when the goroutine exits, which could happen sometime after the requests
@@ -458,7 +458,7 @@ func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {
 }
 
 //nolint:revive // linter wants ctx first, but t first is okay
-func sendGetRequest(t *testing.T, ctx context.Context, client *http.Client, url string, expectations func(*testing.T, *http.Response, error)) {
+func sendGetRequest(t *testing.T, ctx context.Context, client *Client, url string, expectations func(*testing.T, *http.Response, error)) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	require.NoError(t, err)
@@ -467,7 +467,7 @@ func sendGetRequest(t *testing.T, ctx context.Context, client *http.Client, url 
 }
 
 //nolint:revive,unparam // linter wants ctx first, but t first is okay; body is more readable as parameter instead of hard-coded
-func sendPostRequest(t *testing.T, ctx context.Context, client *http.Client, url string, body string, expectations func(*testing.T, *http.Response, error)) {
+func sendPostRequest(t *testing.T, ctx context.Context, client *Client, url string, body string, expectations func(*testing.T, *http.Response, error)) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
 	require.NoError(t, err)
@@ -608,14 +608,14 @@ func ensureGoroutinesCleanedUp(t *testing.T) {
 }
 
 //nolint:revive // linter wants ctx first, but t first is okay
-func makeClient(t *testing.T, ctx context.Context, opts ...ClientOption) *http.Client {
+func makeClient(t *testing.T, ctx context.Context, opts ...ClientOption) *Client {
 	t.Helper()
 	client := NewClient(opts...)
 	t.Cleanup(func() {
-		err := Close(client)
+		err := client.Close()
 		require.NoError(t, err)
 	})
-	err := Prewarm(ctx, client)
+	err := client.Prewarm(ctx)
 	require.NoError(t, err)
 	return client
 }
