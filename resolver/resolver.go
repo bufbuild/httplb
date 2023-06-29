@@ -16,6 +16,7 @@ package resolver
 
 import (
 	"context"
+	"io"
 	"net"
 	"time"
 
@@ -35,33 +36,24 @@ type Factory interface {
 	// The resolver may report errors in addition to or instead of addresses,
 	// but it should keep trying to resolve (and watch for changes), even in
 	// the face of errors, until it is closed or the given context is cancelled.
-	New(ctx context.Context, scheme, hostPort string, receiver Receiver) Resolver
-}
-
-// Resolver is an interface for continuous name resolution.
-type Resolver interface {
-	// ResolveNow is a hint sent by the client that it may need new results.
-	// For example, if the client runs out of healthy hosts, it may call this
-	// method in order to try to find more healthy hosts. This is particularly
-	// likely to happen during e.g. a rolling deployment, wherein the entire
-	// pool of hosts could disappear within the span of a TTL.
 	//
-	// This may be a no-op if it is not possible to "refresh" the result-set,
-	// for a given resolver. This method is considered to merely hint to the
-	// resolver that it should actively search for new results if it can.
+	// The refresh channel will receive signals from the client hinting that it
+	// may need new results. For example, if the client runs out of healthy
+	// hosts, it may call this method in order to try to find more healthy
+	// hosts. This is particularly likely to happen during e.g. a rolling
+	// deployment, wherein the entire pool of hosts could disappear within the
+	// span of a TTL. This may be a no-op. The refresh channel will not be
+	// closed until after Close() returns.
 	//
-	// This method should not be called after calling Close().
-	ResolveNow()
-
-	// Close closes the current resolution process. This will free any resources
-	// (including any background goroutines) before returning. No subsequent
-	// calls to callback should be made after Close returns. The resolve process
-	// should also initiate shutting down if/when the given context is
-	// cancelled.
-	//
-	// Close should always be called, even when the context passed to the
-	// resolver is cancelled.
-	Close() error
+	// The Close method on the return value should stop all goroutines and free
+	// any resources before returning. After close returns, there should be no
+	// subsequent calls to callbacks.
+	New(
+		ctx context.Context,
+		scheme, hostPort string,
+		receiver Receiver,
+		refresh chan struct{},
+	) io.Closer
 }
 
 // Receiver is a client of a resolver and receives the resolved addresses.
@@ -183,12 +175,13 @@ func (f *pollingResolverFactory) New(
 	ctx context.Context,
 	scheme, hostPort string,
 	receiver Receiver,
-) Resolver {
+	refresh chan struct{},
+) io.Closer {
 	ctx, cancel := context.WithCancel(ctx)
 	res := &pollingResolver{
 		cancel:     cancel,
 		doneSignal: make(chan struct{}),
-		refreshCh:  make(chan struct{}, 1),
+		refreshCh:  refresh,
 		factory:    f,
 	}
 	go res.run(ctx, scheme, hostPort, receiver)
@@ -202,16 +195,8 @@ type pollingResolver struct {
 	factory    *pollingResolverFactory
 }
 
-func (res *pollingResolver) ResolveNow() {
-	select {
-	case res.refreshCh <- struct{}{}:
-	default:
-	}
-}
-
 func (res *pollingResolver) Close() error {
 	res.cancel()
-	close(res.refreshCh)
 	<-res.doneSignal
 	return nil
 }
@@ -219,12 +204,6 @@ func (res *pollingResolver) Close() error {
 func (res *pollingResolver) run(ctx context.Context, scheme, hostPort string, receiver Receiver) {
 	defer close(res.doneSignal)
 	defer res.cancel()
-	defer func() {
-		// Drain the refresh channel. This will unblock when Close() is
-		// called. Close should always be called, even if the context is
-		// cancelled first.
-		<-res.refreshCh
-	}()
 
 	timer := res.factory.clock.NewTimer(0)
 	if !timer.Stop() {

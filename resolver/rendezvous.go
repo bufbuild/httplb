@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"hash"
+	"io"
 
 	"github.com/bufbuild/httplb/internal"
 )
@@ -77,14 +78,19 @@ type rendezvousSubsetFactory struct {
 	hash    hash.Hash32
 }
 
-func (s *rendezvousSubsetFactory) New(ctx context.Context, scheme, hostPort string, receiver Receiver) Resolver {
+func (s *rendezvousSubsetFactory) New(
+	ctx context.Context,
+	scheme, hostPort string,
+	receiver Receiver,
+	refresh chan struct{},
+) io.Closer {
 	rcv := &rendezvousSubsetReceiver{
 		Receiver: receiver,
 		key:      s.key,
 		k:        s.k,
 		hash:     s.hash,
 	}
-	return s.factory.New(ctx, scheme, hostPort, rcv)
+	return s.factory.New(ctx, scheme, hostPort, rcv, refresh)
 }
 
 type rendezvousSubsetReceiver struct {

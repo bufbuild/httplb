@@ -642,7 +642,12 @@ type fakeResolverFactory struct {
 	addresses map[string][]string
 }
 
-func (f fakeResolverFactory) New(_ context.Context, _, hostPort string, receiver resolver.Receiver) resolver.Resolver {
+func (f fakeResolverFactory) New(
+	_ context.Context,
+	_, hostPort string,
+	receiver resolver.Receiver,
+	_ chan struct{},
+) io.Closer {
 	addrStrs, ok := f.addresses[hostPort]
 	if !ok {
 		go receiver.OnResolveError(fmt.Errorf("unknown host: %s", hostPort))
@@ -657,8 +662,6 @@ func (f fakeResolverFactory) New(_ context.Context, _, hostPort string, receiver
 }
 
 type fakeResolver struct{}
-
-func (n fakeResolver) ResolveNow() {}
 
 func (n fakeResolver) Close() error { return nil }
 

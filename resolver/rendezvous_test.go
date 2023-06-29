@@ -16,6 +16,7 @@ package resolver_test
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	. "github.com/bufbuild/httplb/resolver"
@@ -25,6 +26,9 @@ import (
 
 func TestRendezvous(t *testing.T) {
 	t.Parallel()
+
+	refreshCh := make(chan struct{})
+	defer close(refreshCh)
 
 	addrFoo := Address{HostPort: "foo"}
 	addrBar := Address{HostPort: "bar"}
@@ -42,7 +46,7 @@ func TestRendezvous(t *testing.T) {
 	})
 	require.NoError(t, err)
 	var receiver fakeReceiver
-	_ = subsetterFactory.New(context.Background(), "", "", &receiver)
+	_ = subsetterFactory.New(context.Background(), "", "", &receiver, refreshCh)
 
 	factory.receiver.OnResolve([]Address{addrFoo})
 	assert.Equal(t, receiver.addrs, []Address{addrFoo})
@@ -61,7 +65,7 @@ func TestRendezvous(t *testing.T) {
 		SelectionKey: "bar",
 	})
 	require.NoError(t, err)
-	_ = subsetterFactory.New(context.Background(), "", "", &receiver)
+	_ = subsetterFactory.New(context.Background(), "", "", &receiver, refreshCh)
 
 	factory.receiver.OnResolve(append([]Address{}, addresses...))
 	set2 := receiver.addrs
@@ -72,7 +76,12 @@ type fakeFactory struct {
 	receiver Receiver
 }
 
-func (f *fakeFactory) New(_ context.Context, _, _ string, receiver Receiver) Resolver {
+func (f *fakeFactory) New(
+	_ context.Context,
+	_, _ string,
+	receiver Receiver,
+	_ chan struct{},
+) io.Closer {
 	f.receiver = receiver
 	return nil
 }
