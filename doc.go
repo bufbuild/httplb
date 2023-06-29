@@ -15,23 +15,23 @@
 // Package httplb provides http.Client instances that are suitable
 // for use for server-to-server communications, like RPC. This adds features
 // on top of the standard net/http library for name/address resolution,
-// health checking, connection management and subsetting, and load balancing.
-// It also provides more suitable defaults and much simpler support for
-// HTTP/2 over plaintext.
+// health checking, and load balancing. It also provides more suitable
+// defaults and much simpler support for HTTP/2 over plaintext.
 //
 // To create a new client use the [NewClient] function. This function
 // accepts numerous options, many for configuring the behavior of the
 // underlying transports. It also provides options for using a custom
-// [name resolver] or a custom [load balancer].
+// [name resolver] or a custom [load balancing policy] and for enabling
+// active [health checking].
 //
-// The returned client has a notion of being "warmed up", via the [Prewarm]
-// function. This function eagerly resolves names, issues health checks
+// The returned client has a notion of being "warmed up", via the Prewarm
+// method. This function eagerly resolves names, issues health checks
 // (if so configured), and awaits a minimum number of ready connections.
 // The [WithBackendTarget] option is used to tell the client which
 // connections need to be warmed up.
 //
-// The returned client also has a notion of "closing", via the [Close]
-// function. This step will wait for outstanding requests to complete and
+// The returned client also has a notion of "closing", via its Close
+// method. This step will wait for outstanding requests to complete and
 // then close all connections and also teardown any other goroutines that
 // it may have started to perform name resolution and health checking.
 // The client cannot be used after it has been closed.
@@ -46,23 +46,25 @@
 //
 //  2. The client will route requests in a round-robin fashion to all
 //     addresses returned by the DNS system (both A and AAAA records).
-//     even with HTTP/2. The http.DefaultClient, however, will use only
-//     a single connection if it can, even if DNS resolves many addresses.
-//     With HTTP 1.1, it will create additional connections to handle
-//     multiple concurrent requests (since an HTTP 1.1 connection can only
-//     service one request at a time). But with HTTP/2, it likely will
-//     *never* use additional connections: it only creates another
-//     connection if the concurrency limit exceeds the server's
-//     "max concurrent streams" (which the server provides when the
-//     connection is initially established and is typically on the order
-//     of 100).
+//     even with HTTP/2.
 //
-// The above options alone should make the `httplb` client distribute load
+//     This differs from the http.DefaultClient, which will use only a
+//     single connection if it can, even if DNS resolves many addresses.
+//     With HTTP 1.1, an http.DefaultClient will create additional
+//     connections to handle multiple concurrent requests (since an HTTP
+//     1.1 connection can only service one request at a time). But with
+//     HTTP/2, it likely will *never* use additional connections: it
+//     only creates another connection if the concurrency limit exceeds
+//     the server's "max concurrent streams" (which the server provides
+//     when the connection is initially established and is typically on
+//     the order of 100).
+//
+// The above behavior alone should make the [httplb.Client] distribute load
 // to backends in a much more appropriate way, especially when using HTTP/2.
 // But the real power of a client returned by this package is that it
 // can be customized with different name resolution and load balancing
-// strategies, via the [WithResolver] and [WithBalancer] options,
-// including support for health checking.
+// policies, via the [WithResolver] and [WithPicker] options. Active health
+// checking can be enabled via the [WithHealthChecks] option.
 //
 // # Transport Architecture
 //
@@ -100,6 +102,7 @@
 // over plaintext, also called "h2c". In addition to supporting "http" and
 // "https" URL schemes, this package also supports "h2c" as a URL scheme.
 //
-// [name resolver]: https://pkg.go.dev/github.com/bufbuild/httplb/resolver
-// [load balancer]: https://pkg.go.dev/github.com/bufbuild/httplb/balancer
+// [name resolver]: https://pkg.go.dev/github.com/bufbuild/httplb/resolver#Resolver
+// [load balancing policy]: https://pkg.go.dev/github.com/bufbuild/httplb/picker#Picker
+// [health checking]: https://pkg.go.dev/github.com/bufbuild/httplb/health#Checker
 package httplb

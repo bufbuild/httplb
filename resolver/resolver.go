@@ -19,7 +19,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/bufbuild/httplb/attrs"
 	"github.com/bufbuild/httplb/internal"
 )
 
@@ -41,8 +40,8 @@ type Factory interface {
 
 // Resolver is an interface for continuous name resolution.
 type Resolver interface {
-	// ResolveNow is a hint sent by the balancer that it may need new results.
-	// For example, if the balancer runs out of healthy hosts, it may call this
+	// ResolveNow is a hint sent by the client that it may need new results.
+	// For example, if the client runs out of healthy hosts, it may call this
 	// method in order to try to find more healthy hosts. This is particularly
 	// likely to happen during e.g. a rolling deployment, wherein the entire
 	// pool of hosts could disappear within the span of a TTL.
@@ -102,7 +101,7 @@ type Address struct {
 	HostPort string
 
 	// Attributes is a collection of arbitrary key/value pairs.
-	Attributes attrs.Attributes
+	Attributes Attrs
 }
 
 // NewDNSResolverFactory creates a new resolver that resolves DNS names.

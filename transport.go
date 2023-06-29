@@ -26,11 +26,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bufbuild/httplb/attrs"
-	"github.com/bufbuild/httplb/balancer"
-	"github.com/bufbuild/httplb/balancer/conn"
-	"github.com/bufbuild/httplb/balancer/picker"
+	"github.com/bufbuild/httplb/conn"
+	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal"
+	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
 	"golang.org/x/sync/errgroup"
 )
@@ -65,7 +64,6 @@ type mainTransport struct {
 
 func newTransport(opts *clientOptions) *mainTransport {
 	ctx, cancel := context.WithCancel(opts.rootCtx)
-	// TODO: custom round trippers, resolvers, balancers, etc
 	transport := &mainTransport{
 		rootCtx:              ctx,
 		cancel:               cancel,
@@ -215,7 +213,8 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	pool = newTransportPool(
 		m.rootCtx,
 		targetOpts.resolver,
-		targetOpts.balancer,
+		targetOpts.picker,
+		targetOpts.healthChecker,
 		dest,
 		applyTimeout,
 		schemeConf,
@@ -332,8 +331,8 @@ type transportPoolEntry struct {
 
 // transportPool is a round tripper that is actually a pool
 // of other transports. The other transports, or "connections",
-// are managed by a [balancer.Balancer]. Particular transports
-// are selected for a request by a [picker.Picker].
+// are managed by a balancer. Particular transports are
+// selected for a request by a [picker.Picker].
 type transportPool struct {
 	dest                target // +checklocksignore: mu is not required, it just happens to be held always.
 	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -341,7 +340,7 @@ type transportPool struct {
 	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized   chan struct{}
 	resolver            resolver.Resolver
-	balancer            balancer.Balancer
+	balancer            *balancer
 	closeComplete       chan struct{}
 	onClose             func()
 
@@ -363,7 +362,8 @@ type transportPool struct {
 func newTransportPool(
 	ctx context.Context,
 	res resolver.Factory,
-	balancerFactory balancer.Factory,
+	pickerFactory picker.Factory,
+	checker health.Checker,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	rtFactory RoundTripperFactory,
@@ -381,7 +381,7 @@ func newTransportPool(
 		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
-	pool.balancer = balancerFactory.New(ctx, dest.scheme, dest.hostPort, pool)
+	pool.balancer = newBalancer(ctx, pickerFactory, checker, pool)
 	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer)
 	return pool
 }
@@ -449,18 +449,6 @@ func (t *transportPool) RemoveConn(toRemove conn.Conn) bool {
 	t.removedConns = append(t.removedConns, c)
 	go c.close()
 	return true
-}
-
-func (t *transportPool) Conns() conn.Connections {
-	t.mu.RLock()
-	conns := t.conns
-	t.mu.RUnlock()
-	// must convert []*connection to []conn.Conn
-	slice := make([]conn.Conn, len(conns))
-	for i := range conns {
-		slice[i] = conns[i]
-	}
-	return conn.ConnectionsFromSlice(slice)
 }
 
 func (t *transportPool) connClosed(closedConn conn.Conn) {
@@ -650,7 +638,7 @@ type connection struct {
 	scheme string
 	addr   string
 	conn   http.RoundTripper
-	attrs  atomic.Pointer[attrs.Attributes]
+	attrs  atomic.Pointer[resolver.Attrs]
 
 	doClose   func()
 	doPrewarm func(context.Context, string, string) error
@@ -672,8 +660,8 @@ func (c *connection) Address() resolver.Address {
 	return addr
 }
 
-func (c *connection) UpdateAttributes(attributes attrs.Attributes) {
-	c.attrs.Store(&attributes)
+func (c *connection) UpdateAttributes(attrs resolver.Attrs) {
+	c.attrs.Store(&attrs)
 }
 
 func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Response, error) {
@@ -768,12 +756,6 @@ func (h *hookReadCloser) done() {
 func (h *hookReadCloser) Read(p []byte) (n int, err error) {
 	n, err = h.ReadCloser.Read(p)
 	if err != nil {
-		// TODO: Is this correct to call here? At this point, we've either
-		// encountered a network error or EOF. Either way, the operation is
-		// complete. But the docs on http.Response.Body suggest that a
-		// connection may not get re-used unless Close() is called (exhausting
-		// the body alone is not sufficient). So maybe we should only hook the
-		// Close() method?
 		h.done()
 	}
 	return n, err
