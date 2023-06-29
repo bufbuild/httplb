@@ -21,9 +21,11 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
+	"github.com/bufbuild/httplb/internal"
 	"github.com/bufbuild/httplb/internal/conns"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
@@ -33,6 +35,11 @@ import (
 var (
 	errResolverReturnedNoAddresses = errors.New("resolver returned no addresses")      // +checklocksignore: mu is not required, but happens to always be held.
 	errNoHealthyConnections        = errors.New("unavailable: no healthy connections") // +checklocksignore: mu is not required, but happens to always be held.
+)
+
+const (
+	reresolveMinInterval = 5 * time.Second
+	reresolveMinPercent  = 50
 )
 
 func newBalancer(
@@ -51,8 +58,8 @@ func newBalancer(
 		resolverUpdates: make(chan struct{}, 1),
 		closed:          make(chan struct{}),
 		connInfo:        map[conn.Conn]connInfo{},
+		clock:           internal.NewRealClock(),
 	}
-	go balancer.receiveAddrs(ctx)
 	return balancer
 }
 
@@ -62,6 +69,7 @@ type connPool interface {
 	NewConn(resolver.Address) (conn.Conn, bool)
 	RemoveConn(conn.Conn) bool
 	UpdatePicker(picker.Picker, bool)
+	ResolveNow()
 }
 
 type balancer struct {
@@ -82,9 +90,10 @@ type balancer struct {
 	// situations with a single writer)
 	closedErr error
 
-	latestAddrs     atomic.Pointer[[]resolver.Address]
-	latestErr       atomic.Pointer[error]
-	resolverUpdates chan struct{}
+	latestAddrs       atomic.Pointer[[]resolver.Address]
+	latestErr         atomic.Pointer[error]
+	resolverUpdates   chan struct{}
+	reresolveLastCall time.Time // +checklocksignore: mu is not required, but happens to always be held.
 
 	mu sync.Mutex
 	// +checklocks:mu
@@ -95,6 +104,8 @@ type balancer struct {
 	conns []conn.Conn
 	// +checklocks:mu
 	connInfo map[conn.Conn]connInfo
+
+	clock internal.Clock
 }
 
 func (b *balancer) UpdateHealthState(connection conn.Conn, state health.State) {
@@ -155,6 +166,10 @@ func (b *balancer) Close() error {
 	// Don't return until everything is done.
 	<-b.closed
 	return b.closedErr
+}
+
+func (b *balancer) start() {
+	go b.receiveAddrs(b.ctx)
 }
 
 func (b *balancer) receiveAddrs(ctx context.Context) {
@@ -351,6 +366,18 @@ func (b *balancer) computeUsableConnsLocked() []conn.Conn {
 			break
 		}
 	}
+
+	// If we have less usable connections than the reresolve threshold, reresolve.
+	// TODO: make some of these options configurable
+	numHealthy := len(connsByState[health.StateHealthy])
+	numTotal := len(b.conns)
+	if int(math.Round(reresolveMinPercent*float64(numTotal)/100)) >= numHealthy {
+		if b.reresolveLastCall.IsZero() || b.clock.Since(b.reresolveLastCall) > reresolveMinInterval {
+			b.reresolveLastCall = b.clock.Now()
+			b.pool.ResolveNow()
+		}
+	}
+
 	return results
 }
 

@@ -383,6 +383,7 @@ func newTransportPool(
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = newBalancer(ctx, pickerFactory, checker, pool)
 	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer)
+	pool.balancer.start()
 	return pool
 }
 

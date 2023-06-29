@@ -103,6 +103,7 @@ type FakeConnPool struct {
 
 	pickerUpdate chan struct{}
 	connsUpdate  chan struct{}
+	resolveNowCh chan struct{}
 
 	mu sync.Mutex
 	// +checklocks:mu
@@ -111,6 +112,8 @@ type FakeConnPool struct {
 	active conns.Set
 	// +checklocks:mu
 	picker PickerState
+	// +checklocks:mu
+	resolveNowCount int
 }
 
 // NewFakeConnPool constructs a new FakeConnPool.
@@ -118,6 +121,7 @@ func NewFakeConnPool() *FakeConnPool {
 	return &FakeConnPool{
 		pickerUpdate: make(chan struct{}, 1),
 		connsUpdate:  make(chan struct{}, 1),
+		resolveNowCh: make(chan struct{}, 1),
 	}
 }
 
@@ -187,8 +191,18 @@ func (p *FakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 	}
 }
 
-// ResolveNow implements the balancer.ConnPool interface. It is a no-op.
-func (p *FakeConnPool) ResolveNow() {}
+// ResolveNow implements the balancer.ConnPool interface. It increments a
+// counter that can be introspected.
+func (p *FakeConnPool) ResolveNow() {
+	p.mu.Lock()
+	p.resolveNowCount++
+	p.mu.Unlock()
+
+	select {
+	case p.resolveNowCh <- struct{}{}:
+	default:
+	}
+}
 
 // SnapshotConns returns a snapshot of the current active connections. This will
 // include all connections created via NewConn but not yet removed via RemoveConn.
@@ -233,6 +247,23 @@ func (p *FakeConnPool) AwaitConnUpdate(ctx context.Context) (conns.Set, error) {
 		return nil, ctx.Err()
 	case <-p.connsUpdate:
 		return p.SnapshotConns(), nil
+	}
+}
+
+// AwaitResolveNow waits for a concurrent call to ResolveNow, usually called by
+// the balancer when the number of healthy connections is running below the
+// threshold. If the context is cancelled before the ResolveNow method is
+// called, this function returns the context error. If it succeeds, it will
+// return the number of times ResolveNow has been called.
+func (p *FakeConnPool) AwaitResolveNow(ctx context.Context) (int, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-p.resolveNowCh:
+		p.mu.Lock()
+		count := p.resolveNowCount
+		p.mu.Unlock()
+		return count, nil
 	}
 }
 

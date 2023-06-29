@@ -24,8 +24,10 @@ import (
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/balancertesting"
+	"github.com/bufbuild/httplb/internal/clocktest"
 	"github.com/bufbuild/httplb/internal/conns"
 	"github.com/bufbuild/httplb/resolver"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -205,6 +207,7 @@ func TestBalancer_BasicConnManagement(t *testing.T) {
 	pool := balancertesting.NewFakeConnPool()
 	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, health.NoOpChecker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
+	balancer.start()
 	// Initial resolve
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
@@ -283,6 +286,7 @@ func TestBalancer_HealthChecking(t *testing.T) {
 	}
 	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
+	balancer.start()
 
 	checker.SetInitialState(health.StateUnknown)
 	warmChan1 := make(chan struct{})
@@ -379,6 +383,47 @@ func TestBalancer_HealthChecking(t *testing.T) {
 	require.Empty(t, checkers)
 }
 
+func TestDefaultBalancer_Reresolve(t *testing.T) {
+	t.Parallel()
+	checker := balancertesting.NewFakeHealthChecker()
+	clock := clocktest.NewFakeClock()
+	pool := balancertesting.NewFakeConnPool()
+
+	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
+	balancer.updateHook = balancertesting.DeterministicReconciler
+	balancer.clock = clock
+	balancer.start()
+
+	checker.SetInitialState(health.StateUnknown)
+
+	// Initial resolve
+	addrs := []resolver.Address{
+		{HostPort: "1.2.3.1"},
+		{HostPort: "1.2.3.2"},
+		{HostPort: "1.2.3.3"},
+		{HostPort: "1.2.3.4"},
+	}
+	balancer.OnResolve(addrs)
+	awaitPickerUpdate(t, pool, false, addrs, []int{1, 2, 3, 4})
+	conns := pool.SnapshotConns()
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	checker.UpdateHealthState(conn1, health.StateUnhealthy)
+	checker.UpdateHealthState(conn2, health.StateUnhealthy)
+	awaitResolveNow(t, pool, 1)
+	checker.UpdateHealthState(conn3, health.StateUnhealthy)
+	clock.Advance(10 * time.Second)
+	checker.UpdateHealthState(conn4, health.StateUnhealthy)
+	awaitResolveNow(t, pool, 2)
+
+	err := balancer.Close()
+	require.NoError(t, err)
+	checkers := checker.SnapshotConns()
+	require.Empty(t, checkers)
+}
+
 func awaitPickerUpdate(t *testing.T, pool *balancertesting.FakeConnPool, warm bool, addrs []resolver.Address, indexes []int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -439,6 +484,15 @@ func awaitCheckerUpdate(t *testing.T, checker *balancertesting.FakeHealthChecker
 			return
 		}
 	}
+}
+
+func awaitResolveNow(t *testing.T, pool *balancertesting.FakeConnPool, count int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := pool.AwaitResolveNow(ctx)
+	require.NoError(t, err, "didn't re-resolve after 1 second")
+	assert.Equal(t, count, got, "unexpected number of re-resolve requests")
 }
 
 func checkState(state balancertesting.PickerState, warm bool, addrs []resolver.Address, indexes []int) bool {
