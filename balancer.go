@@ -90,10 +90,10 @@ type balancer struct {
 	// situations with a single writer)
 	closedErr error
 
-	latestAddrs       atomic.Pointer[[]resolver.Address]
-	latestErr         atomic.Pointer[error]
-	resolverUpdates   chan struct{}
-	reresolveLastCall time.Time // +checklocksignore: mu is not required, but happens to always be held.
+	latestAddrs     atomic.Pointer[[]resolver.Address]
+	latestErr       atomic.Pointer[error]
+	resolverUpdates chan struct{}
+	clock           internal.Clock
 
 	mu sync.Mutex
 	// +checklocks:mu
@@ -104,8 +104,8 @@ type balancer struct {
 	conns []conn.Conn
 	// +checklocks:mu
 	connInfo map[conn.Conn]connInfo
-
-	clock internal.Clock
+	// +checklocks:mu
+	reresolveLastCall time.Time
 }
 
 func (b *balancer) UpdateHealthState(connection conn.Conn, state health.State) {
