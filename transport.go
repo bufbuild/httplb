@@ -499,16 +499,6 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 		request = request.WithContext(ctx)
 	}
 
-	// rewrite request if necessary
-	chosenScheme, chosenAddr := chosen.Scheme(), chosen.Address().HostPort
-	if (chosenScheme != "" && chosenScheme != request.URL.Scheme) || chosenAddr != request.URL.Host {
-		request = request.Clone(request.Context())
-		if chosenScheme != "" {
-			request.URL.Scheme = chosenScheme
-		}
-		request.URL.Host = chosenAddr
-	}
-
 	return chosen.RoundTrip(request, func() {
 		if cancel != nil {
 			cancel()

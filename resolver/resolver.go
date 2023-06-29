@@ -145,18 +145,19 @@ type dnsResolveProber struct {
 
 func (r *dnsResolveProber) ResolveOnce(
 	ctx context.Context,
-	_, hostPort string,
+	scheme, hostPort string,
 ) ([]Address, time.Duration, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		// Assume this is not a host:port pair.
 		// There is no possible better heuristic for this, unfortunately.
 		host = hostPort
-		port = ""
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		// given host is already a resolved IP address, so return as is
-		return []Address{{HostPort: hostPort}}, 0, nil
+		switch scheme {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
 	}
 	addresses, err := r.resolver.LookupNetIP(ctx, r.network, host)
 	if err != nil {
@@ -164,11 +165,7 @@ func (r *dnsResolveProber) ResolveOnce(
 	}
 	result := make([]Address, len(addresses))
 	for i, address := range addresses {
-		if port != "" {
-			result[i].HostPort = net.JoinHostPort(address.String(), port)
-		} else {
-			result[i].HostPort = address.String()
-		}
+		result[i].HostPort = net.JoinHostPort(address.String(), port)
 	}
 	return result, 0, nil
 }

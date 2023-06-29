@@ -30,6 +30,10 @@ import (
 type RoundTripperFactory interface {
 	// New creates a new [http.RoundTripper] for requests using the given scheme to the
 	// given host, configured using the given options.
+	//
+	// Note that RoundTripperFactory implementations are responsible for making
+	// sure that requests go to the target address, regardless of what hostname
+	// is present in the URL of a request.
 	New(scheme, target string, options RoundTripperOptions) RoundTripperResult
 }
 
@@ -93,11 +97,13 @@ func roundTripperOptionsFrom(opts *targetOptions) RoundTripperOptions {
 
 type simpleFactory struct{}
 
-func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperResult {
+func (s simpleFactory) New(_, target string, opts RoundTripperOptions) RoundTripperResult {
 	transport := &http.Transport{
-		Proxy:                  opts.ProxyFunc,
-		GetProxyConnectHeader:  opts.ProxyConnectHeadersFunc,
-		DialContext:            opts.DialFunc,
+		Proxy:                 opts.ProxyFunc,
+		GetProxyConnectHeader: opts.ProxyConnectHeadersFunc,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return opts.DialFunc(ctx, network, target)
+		},
 		ForceAttemptHTTP2:      true,
 		MaxIdleConns:           1,
 		MaxIdleConnsPerHost:    1,
@@ -114,12 +120,12 @@ func (s simpleFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperRe
 
 type h2cFactory struct{}
 
-func (s h2cFactory) New(_, _ string, opts RoundTripperOptions) RoundTripperResult {
+func (s h2cFactory) New(_, target string, opts RoundTripperOptions) RoundTripperResult {
 	// We can't support all round tripper options with H2C.
 	transport := &http2.Transport{
 		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return defaultDialer.DialContext(ctx, network, addr)
+		DialTLSContext: func(ctx context.Context, network, _ string, _ *tls.Config) (net.Conn, error) {
+			return opts.DialFunc(ctx, network, target)
 		},
 		// We don't bother setting the TLS config, because h2c is plain-text only
 		//TLSClientConfig:   opts.TLSClientConfig,
