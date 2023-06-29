@@ -185,7 +185,7 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	addr2 := startServer(t, ctx, handler)
 	addr3 := startServer(t, ctx, handler)
 	var dialCount atomic.Int32
-	tlsConf := &tls.Config{} //nolint:gosec
+	tlsConf := &tls.Config{ServerName: "example.com"} //nolint:gosec
 	client := makeClient(t, ctx,
 		WithRoundTripperFactory("http", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
 			latestOptions.Store(target, options)
@@ -216,7 +216,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Nil(t, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "127.0.0.1", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 10*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
@@ -244,7 +245,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Nil(t, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "127.0.0.1", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 10*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
@@ -260,7 +262,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.NotEqual(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Same(t, tlsConf, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "example.com", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 5*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(10101), rtOpts.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, rtOpts.IdleConnTimeout)
@@ -271,7 +274,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	transport = val.(RoundTripperResult).RoundTripper.(*http.Transport) //nolint:errcheck
 	require.Equal(t, reflect.ValueOf(transport.Proxy).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, transport.GetProxyConnectHeader)
-	require.Same(t, tlsConf, transport.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "example.com", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 5*time.Second, transport.TLSHandshakeTimeout)
 	require.Equal(t, int64(10101), transport.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, transport.IdleConnTimeout)

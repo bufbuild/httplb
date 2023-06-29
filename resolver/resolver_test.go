@@ -42,7 +42,7 @@ func TestResolverTTL(t *testing.T) {
 	signal := make(chan struct{})
 	task := resolver.New(ctx, "http", "::1", testReceiver{
 		onResolve: func(a []Address) {
-			assert.Equal(t, "::1", a[0].HostPort)
+			assert.Equal(t, "[::1]:80", a[0].HostPort)
 			signal <- struct{}{}
 		},
 		onResolveError: func(err error) {
