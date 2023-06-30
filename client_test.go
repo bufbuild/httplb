@@ -456,6 +456,8 @@ func TestNewClient_TLS(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
+	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
+
 	certpool := x509.NewCertPool()
 	certpool.AddCert(server.Certificate())
 	client := makeClient(t, ctx,
@@ -463,7 +465,7 @@ func TestNewClient_TLS(t *testing.T) {
 			RootCAs: certpool,
 		}, 0),
 		WithResolver(fakeResolver{map[string][]string{
-			"localhost": {"127.0.0.1"},
+			net.JoinHostPort("localhost", port): {net.JoinHostPort("127.0.0.1", port)},
 		}}),
 	)
 
@@ -471,7 +473,6 @@ func TestNewClient_TLS(t *testing.T) {
 	// that we can test to ensure that TLS is handled correctly when requests
 	// are rewritten.
 	url, _ := url.Parse(server.URL)
-	_, port, _ := net.SplitHostPort(url.Host)
 	url.Host = net.JoinHostPort("localhost", port)
 
 	sendGetRequest(t, ctx, client, url.String(), expectSuccess("success"))
