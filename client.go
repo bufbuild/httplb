@@ -36,7 +36,7 @@ var (
 		KeepAlive: 30 * time.Second,
 	}
 	defaultNameTTL  = 5 * time.Minute
-	defaultResolver = resolver.NewDNSResolverFactory(net.DefaultResolver, "ip", defaultNameTTL)
+	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
 )
 
 // Client is an HTTP client that includes client-side load balancing logic. It
@@ -197,7 +197,7 @@ type TargetOption interface {
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
-func WithResolver(res resolver.Factory) TargetOption {
+func WithResolver(res resolver.Resolver) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
 		opts.resolver = res
 	})
@@ -466,7 +466,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 }
 
 type targetOptions struct {
-	resolver                resolver.Factory
+	resolver                resolver.Resolver
 	picker                  picker.Factory
 	healthChecker           health.Checker
 	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)

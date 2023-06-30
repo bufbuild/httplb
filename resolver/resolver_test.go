@@ -28,17 +28,19 @@ import (
 func TestResolverTTL(t *testing.T) {
 	t.Parallel()
 
+	refreshCh := make(chan struct{})
+
 	const testTTL = 20 * time.Second
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	factory := NewDNSResolverFactory(net.DefaultResolver, "ip6", testTTL)
-	factory.(*pollingResolverFactory).clock = testClock
+	resolver := NewDNSResolver(net.DefaultResolver, "ip6", testTTL)
+	resolver.(*pollingResolver).clock = testClock
 
 	signal := make(chan struct{})
-	resolver := factory.New(ctx, "http", "::1", testReceiver{
+	task := resolver.New(ctx, "http", "::1", testReceiver{
 		onResolve: func(a []Address) {
 			assert.Equal(t, "::1", a[0].HostPort)
 			signal <- struct{}{}
@@ -46,7 +48,7 @@ func TestResolverTTL(t *testing.T) {
 		onResolveError: func(err error) {
 			t.Errorf("unexpected resolution error: %v", err)
 		},
-	})
+	}, refreshCh)
 	waitForResolve := func() {
 		select {
 		case <-signal:
@@ -57,7 +59,8 @@ func TestResolverTTL(t *testing.T) {
 
 	t.Cleanup(func() {
 		close(signal)
-		err := resolver.Close()
+		err := task.Close()
+		close(refreshCh)
 		require.NoError(t, err)
 	})
 
@@ -72,7 +75,11 @@ func TestResolverTTL(t *testing.T) {
 	assert.NoError(t, err)
 
 	// When we call ResolveNow, we should get a new probe.
-	resolver.ResolveNow()
+	select {
+	case refreshCh <- struct{}{}:
+	case <-ctx.Done():
+		t.Fatalf("cancelled before refresh channel unblocked: %v", ctx.Err())
+	}
 	waitForResolve()
 	err = testClock.BlockUntilContext(ctx, 1)
 	assert.NoError(t, err)

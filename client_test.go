@@ -140,7 +140,7 @@ func TestNewClient_LoadBalancing(t *testing.T) {
 		_, _ = w.Write(([]byte)("got it!"))
 	}))
 	client := makeClient(t, ctx,
-		WithResolver(fakeResolverFactory{map[string][]string{"foo.com": {addr1, addr2, addr3}}}),
+		WithResolver(fakeResolver{map[string][]string{"foo.com": {addr1, addr2, addr3}}}),
 		WithBackendTarget("http", "foo.com"),
 	)
 
@@ -372,7 +372,7 @@ func TestNewClient_Timeouts(t *testing.T) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
 	client := makeClient(t, ctx,
-		WithResolver(fakeResolverFactory{map[string][]string{
+		WithResolver(fakeResolver{map[string][]string{
 			"foo.com": {addr},
 			"bar.com": {addr},
 			"baz.com": {addr},
@@ -409,7 +409,7 @@ func TestNewClient_Proxy(t *testing.T) {
 	proxyAddr, proxyCounter := startProxy(t, ctx)
 
 	client := makeClient(t, ctx,
-		WithResolver(fakeResolverFactory{map[string][]string{
+		WithResolver(fakeResolver{map[string][]string{
 			"foo.com": {addr},
 			"bar.com": {addr},
 		}}),
@@ -638,29 +638,32 @@ func awaitGoroutinesExiting(t *testing.T, expectedGoroutines int) {
 	t.Errorf("%d goroutines leaked:\n%s", currentGoroutines-expectedGoroutines, string(buf[:n]))
 }
 
-type fakeResolverFactory struct {
+type fakeResolver struct {
 	addresses map[string][]string
 }
 
-func (f fakeResolverFactory) New(_ context.Context, _, hostPort string, receiver resolver.Receiver) resolver.Resolver {
+func (f fakeResolver) New(
+	_ context.Context,
+	_, hostPort string,
+	receiver resolver.Receiver,
+	_ <-chan struct{},
+) io.Closer {
 	addrStrs, ok := f.addresses[hostPort]
 	if !ok {
 		go receiver.OnResolveError(fmt.Errorf("unknown host: %s", hostPort))
-		return fakeResolver{}
+		return fakeResolverTask{}
 	}
 	addrs := make([]resolver.Address, len(addrStrs))
 	for i, addr := range addrStrs {
 		addrs[i] = resolver.Address{HostPort: addr}
 	}
 	go receiver.OnResolve(addrs)
-	return fakeResolver{}
+	return fakeResolverTask{}
 }
 
-type fakeResolver struct{}
+type fakeResolverTask struct{}
 
-func (n fakeResolver) ResolveNow() {}
-
-func (n fakeResolver) Close() error { return nil }
+func (n fakeResolverTask) Close() error { return nil }
 
 type roundTripperFactoryFunc func(scheme, target string, options RoundTripperOptions) RoundTripperResult
 
