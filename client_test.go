@@ -456,7 +456,8 @@ func TestNewClient_TLS(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(t, err)
 
 	certpool := x509.NewCertPool()
 	certpool.AddCert(server.Certificate())
@@ -472,7 +473,8 @@ func TestNewClient_TLS(t *testing.T) {
 	// We really need to make sure the host is resolved to something else so
 	// that we can test to ensure that TLS is handled correctly when requests
 	// are rewritten.
-	url, _ := url.Parse(server.URL)
+	url, err := url.Parse(server.URL)
+	require.NoError(t, err)
 	url.Host = net.JoinHostPort("localhost", port)
 
 	sendGetRequest(t, ctx, client, url.String(), expectSuccess("success"))
