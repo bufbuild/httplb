@@ -40,12 +40,12 @@ func main() {
 	client := httplb.NewClient(
 		httplb.WithResolver(
 			// Use a resolver for IPv4. You can pass "ip" for dual-stack setups,
-            // or "ip6" for pure IPv6. This defaults to "ip" and assumes IPv6
-            // is suitable for your deployment.
+			// or "ip6" for pure IPv6. This defaults to "ip" and assumes IPv6
+			// is suitable for your deployment.
 			resolver.NewDNSResolverFactory(net.DefaultResolver, "ip4", 5*time.Minute),
 		),
 	)
-    defer client.Close()
+	defer client.Close()
 	resp, err := client.Get("https://example.com")
 	if err != nil {
 		log.Fatalln(err)
@@ -60,9 +60,9 @@ And here is how you can use `httplb` with `connect-go`:
 ```go
 func main() {
 	client := httplb.NewClient()
-    defer client.Close()
+	defer client.Close()
 	pingClient := pingv1connect.NewPingServiceClient(
-		client.Client,
+		client,
 		"http://localhost:8080/",
 	)
 	req := connect.NewRequest(&pingv1.PingRequest{
@@ -80,7 +80,7 @@ It's also easy to use H2C. Just use the `h2c` scheme in your URLs instead of `ht
 
 ```go
 	pingClient := pingv1connect.NewPingServiceClient(
-		client.Client,
+		client,
 		"h2c://localhost:8080/",
 	)
 ```
