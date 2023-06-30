@@ -17,6 +17,7 @@ package httplb
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -185,7 +186,7 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	addr2 := startServer(t, ctx, handler)
 	addr3 := startServer(t, ctx, handler)
 	var dialCount atomic.Int32
-	tlsConf := &tls.Config{} //nolint:gosec
+	tlsConf := &tls.Config{ServerName: "example.com"} //nolint:gosec
 	client := makeClient(t, ctx,
 		WithRoundTripperFactory("http", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
 			latestOptions.Store(target, options)
@@ -216,7 +217,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Nil(t, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "127.0.0.1", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 10*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
@@ -244,7 +246,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Nil(t, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "127.0.0.1", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 10*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
@@ -260,7 +263,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.NotNil(t, rtOpts)
 	require.NotEqual(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
-	require.Same(t, tlsConf, rtOpts.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "example.com", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 5*time.Second, rtOpts.TLSHandshakeTimeout)
 	require.Equal(t, int64(10101), rtOpts.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, rtOpts.IdleConnTimeout)
@@ -271,7 +275,8 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	transport = val.(RoundTripperResult).RoundTripper.(*http.Transport) //nolint:errcheck
 	require.Equal(t, reflect.ValueOf(transport.Proxy).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, transport.GetProxyConnectHeader)
-	require.Same(t, tlsConf, transport.TLSClientConfig)
+	require.NotNil(t, rtOpts.TLSClientConfig)
+	require.Equal(t, "example.com", rtOpts.TLSClientConfig.ServerName)
 	require.Equal(t, 5*time.Second, transport.TLSHandshakeTimeout)
 	require.Equal(t, int64(10101), transport.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, transport.IdleConnTimeout)
@@ -435,6 +440,44 @@ func TestNewClient_Proxy(t *testing.T) {
 	// the other domain, however, will go through our proxy
 	sendGetRequest(t, ctx, client, "http://bar.com/foo", expectSuccess("got it"))
 	require.Equal(t, int32(1), proxyCounter.Load())
+}
+
+func TestNewClient_TLS(t *testing.T) {
+	ensureGoroutinesCleanedUp(t)
+
+	cert, err := tls.X509KeyPair([]byte(localhostCert), []byte(localhostKey))
+	require.NoError(t, err, "loading localhost cert failed")
+
+	ctx := context.Background()
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(([]byte)("success"))
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}} //nolint:gosec
+	server.StartTLS()
+	defer server.Close()
+
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(t, err)
+
+	certpool := x509.NewCertPool()
+	certpool.AddCert(server.Certificate())
+	client := makeClient(t, ctx,
+		WithTLSConfig(&tls.Config{ //nolint:gosec
+			RootCAs: certpool,
+		}, 0),
+		WithResolver(fakeResolver{map[string][]string{
+			net.JoinHostPort("localhost", port): {net.JoinHostPort("127.0.0.1", port)},
+		}}),
+	)
+
+	// We really need to make sure the host is resolved to something else so
+	// that we can test to ensure that TLS is handled correctly when requests
+	// are rewritten.
+	url, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	url.Host = net.JoinHostPort("localhost", port)
+
+	sendGetRequest(t, ctx, client, url.String(), expectSuccess("success"))
 }
 
 func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {

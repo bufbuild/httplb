@@ -16,10 +16,12 @@ package httplb
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -209,6 +211,18 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	// explicitly configured targets are kept warm
 	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
 
+	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
+	if opts.TLSClientConfig == nil {
+		opts.TLSClientConfig = new(tls.Config)
+	}
+	if opts.TLSClientConfig.ServerName == "" {
+		host, _, err := net.SplitHostPort(dest.hostPort)
+		if err != nil {
+			host = dest.hostPort
+		}
+		opts.TLSClientConfig.ServerName = host
+	}
+
 	m.runningPools.Add(1)
 	pool = newTransportPool(
 		m.rootCtx,
@@ -397,7 +411,14 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 		return nil, false
 	}
 
-	result := t.roundTripperFactory.New(t.dest.scheme, address.HostPort, t.roundTripperOptions)
+	// NOTE: The Go HTTP2 client does NOT defensively clone the TLS config
+	// before it attempts to mutate it, so we can't share the same TLS config
+	// across multiple connections right now.
+	// TODO: file upstream bug?
+	opts := t.roundTripperOptions
+	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
+
+	result := t.roundTripperFactory.New(t.dest.scheme, address.HostPort, opts)
 	newConn := &connection{
 		scheme:    result.Scheme,
 		addr:      address.HostPort,
@@ -508,12 +529,17 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 
 	// rewrite request if necessary
 	chosenScheme, chosenAddr := chosen.Scheme(), chosen.Address().HostPort
-	if (chosenScheme != "" && chosenScheme != request.URL.Scheme) || chosenAddr != request.URL.Host {
+	if (chosenScheme != "" && request.URL.Scheme != chosenScheme) || request.URL.Host != chosenAddr || request.Host == "" {
 		request = request.Clone(request.Context())
 		if chosenScheme != "" {
 			request.URL.Scheme = chosenScheme
 		}
-		request.URL.Host = chosenAddr
+		if request.URL.Host != chosenAddr {
+			request.URL.Host = chosenAddr
+		}
+		if request.Host == "" {
+			request.Host = request.URL.Host
+		}
 	}
 
 	return chosen.RoundTrip(request, func() {
