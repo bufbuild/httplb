@@ -4,7 +4,7 @@
 [![Report Card](https://goreportcard.com/badge/github.com/bufbuild/httplb)](https://goreportcard.com/report/github.com/bufbuild/httplb)
 [![GoDoc](https://pkg.go.dev/badge/github.com/bufbuild/httplb.svg)](https://pkg.go.dev/github.com/bufbuild/httplb)
 
-[`httlb`](https://pkg.go.dev/github.com/bufbuild/httplb)
+[`httplb`](https://pkg.go.dev/github.com/bufbuild/httplb)
 provides client-side load balancing for `net/http` clients. By default,
 clients are designed for server-to-server and RPC workloads:
 
@@ -19,6 +19,78 @@ checking.
 
 `httplb` takes care to build all this functionality underneath the standard library's
 `*http.Client`, so `httplb` is usable anywhere you're currently using `net/http`.
+
+## Example
+
+Here's a quick example of how to get started with `httplb`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/bufbuild/httplb"
+	"github.com/bufbuild/httplb/resolver"
+)
+
+func main() {
+	client := httplb.NewClient(
+		httplb.WithResolver(
+			// Use a resolver for IPv4. You can pass "ip" for dual-stack setups,
+			// or "ip6" for pure IPv6. This defaults to "ip" and assumes IPv6
+			// is suitable for your deployment.
+			resolver.NewDNSResolverFactory(net.DefaultResolver, "ip4", 5*time.Minute),
+		),
+	)
+	defer client.Close()
+	resp, err := client.Get("https://example.com")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer resp.Body.Close()
+	log.Println(resp.Status)
+}
+```
+
+And here is how you can use `httplb` with `connect-go`:
+
+```go
+func main() {
+	client := httplb.NewClient()
+	defer client.Close()
+	pingClient := pingv1connect.NewPingServiceClient(
+		client,
+		"http://localhost:8080/",
+	)
+	req := connect.NewRequest(&pingv1.PingRequest{
+		Number: 42,
+	})
+	res, err := pingClient.Ping(context.Background(), req)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Println(res.Msg)
+}
+```
+
+It's also easy to use H2C. Just use the `h2c` scheme in your URLs instead of `http`:
+
+```go
+	pingClient := pingv1connect.NewPingServiceClient(
+		client,
+		"h2c://localhost:8080/",
+	)
+```
+
+For more information on how to use `httplb`, especially for advanced use cases, take
+a look at the [full documentation](https://pkg.go.dev/github.com/bufbuild/httplb).
+
+## Ecosystem
+
+* [connect-go](https://github.com/bufbuild/connect-go): RPC library, compatible with `httplb`.
 
 ## Status: Alpha
 
