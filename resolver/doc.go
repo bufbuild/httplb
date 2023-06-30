@@ -84,7 +84,7 @@
 // For decorators that use resources (such as background goroutines) and need
 // to be explicitly shut down to release those resources, the Resolver interface
 // should be decorated, just as is done by RendezvousHashSubsetter. That way,
-// any Resolver instances created can also be decorated, in order to hook into
-// their Close method. When the Resolver for a corresponding Receiver is closed,
+// any tasks created by the Resolver can also be decorated, in order to hook into
+// their Close method. When the task for a corresponding Receiver is closed,
 // the decorator should shut down and release any resources.
 package resolver

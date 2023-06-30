@@ -26,12 +26,11 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-// RendezvousHashSubsetter returns a Resolver that creates Resolver instances
-// that uses rendezvous hashing to pick a randomly-distributed but consistent
-// subset of k hosts. When provided the same selection key and k value, it
-// will return the same addresses. When an address is removed, all of the
-// requests that would have been directed to it will be distributed randomly
-// to other addresses.
+// RendezvousHashSubsetter returns a Resolver that creates tasks that use
+// rendezvous hashing to pick a randomly-distributed but consistent subset of k
+// hosts. When provided the same selection key and k value, it will return the
+// same addresses. When an address is removed, all of the requests that would
+// have been directed to it will be distributed randomly to other addresses.
 func RendezvousHashSubsetter(resolver Resolver, options RendezvousConfig) (Resolver, error) {
 	if options.SelectionKey == "" {
 		randomKey, err := randomKey()
