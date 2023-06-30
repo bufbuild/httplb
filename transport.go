@@ -635,7 +635,6 @@ func (t *transportPool) close() {
 		}
 	}
 	_ = grp.Wait()
-	close(t.reresolve)
 	close(t.closeComplete)
 	if t.onClose != nil {
 		t.onClose()
