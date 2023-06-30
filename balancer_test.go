@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package httplb
+package httplb_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bufbuild/httplb"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/balancertesting"
@@ -71,7 +72,7 @@ func TestConnManager(t *testing.T) {
 			return updateReq{}
 		}
 	}
-	var connMgr connManager
+	var connMgr httplb.ConnManager
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
 		{HostPort: "1.2.3.2"},
@@ -80,7 +81,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.5"},
 		{HostPort: "1.2.3.6"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.ReconcileAddresses(addrs, testUpdate)
 	latestUpdate := getLatestUpdate()
 	require.Equal(t, addrs, latestUpdate.newAddrs)
 	require.Empty(t, latestUpdate.removeConns)
@@ -106,7 +107,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.3"},
 		{HostPort: "1.2.3.3"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.ReconcileAddresses(addrs, testUpdate)
 	latestUpdate = getLatestUpdate()
 	// 10 entries needed, and we start with 3. So we need
 	// 2x more of each, but 3x of the first
@@ -148,7 +149,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.3", Attributes: attrs3a},
 		{HostPort: "1.2.3.3", Attributes: attrs3b},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.ReconcileAddresses(addrs, testUpdate)
 	latestUpdate = getLatestUpdate()
 	require.Empty(t, latestUpdate.newAddrs)
 	require.Equal(t, []conn.Conn{conn1i8, conn1i9, conn2i11, conn3i13}, latestUpdate.removeConns)
@@ -183,7 +184,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.6"},
 		{HostPort: "1.2.3.8"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.ReconcileAddresses(addrs, testUpdate)
 	// Wanted to create 1.2.3.4, 1.2.3.6, and 1.2.3.8, but only first two created.
 	latestUpdate = getLatestUpdate()
 	require.Equal(t, addrs[1:], latestUpdate.newAddrs)
@@ -196,7 +197,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.6"},
 		{HostPort: "1.2.3.8"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.ReconcileAddresses(addrs, testUpdate)
 	latestUpdate = getLatestUpdate()
 	require.Equal(t, addrs[3:], latestUpdate.newAddrs)
 	require.Empty(t, latestUpdate.removeConns)
@@ -205,9 +206,9 @@ func TestConnManager(t *testing.T) {
 func TestBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
 	pool := balancertesting.NewFakeConnPool()
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, health.NoOpChecker, pool)
-	balancer.updateHook = balancertesting.DeterministicReconciler
-	balancer.start()
+	balancer := httplb.NewBalancer(context.Background(), balancertesting.FakePickerFactory, health.NoOpChecker, pool)
+	balancer.SetUpdateHook(balancertesting.DeterministicReconciler)
+	balancer.Start()
 	// Initial resolve
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
@@ -284,9 +285,9 @@ func TestBalancer_HealthChecking(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
-	balancer.updateHook = balancertesting.DeterministicReconciler
-	balancer.start()
+	balancer := httplb.NewBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
+	balancer.SetUpdateHook(balancertesting.DeterministicReconciler)
+	balancer.Start()
 
 	checker.SetInitialState(health.StateUnknown)
 	warmChan1 := make(chan struct{})
@@ -389,10 +390,10 @@ func TestDefaultBalancer_Reresolve(t *testing.T) {
 	clock := clocktest.NewFakeClock()
 	pool := balancertesting.NewFakeConnPool()
 
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
-	balancer.updateHook = balancertesting.DeterministicReconciler
-	balancer.clock = clock
-	balancer.start()
+	balancer := httplb.NewBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
+	balancer.SetUpdateHook(balancertesting.DeterministicReconciler)
+	balancer.SetClock(clock)
+	balancer.Start()
 
 	checker.SetInitialState(health.StateUnknown)
 

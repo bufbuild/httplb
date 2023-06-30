@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package internal
+package internal_test
 
 import (
 	"hash/fnv"
 	"testing"
 
+	"github.com/bufbuild/httplb/internal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -43,13 +44,13 @@ func TestMurmurHash3(t *testing.T) {
 func testMurmurHash3Input(t *testing.T, data []byte, seed, expected uint32) {
 	t.Helper()
 
-	assert.Equal(t, expected, MurmurHash3Sum(data, seed))
+	assert.Equal(t, expected, internal.MurmurHash3Sum(data, seed))
 }
 
 func TestMurmurHash3Uneven(t *testing.T) {
 	t.Parallel()
 
-	hash := MurmurHash3{h1: 0x9747b28c}
+	hash := internal.NewMurmurHash3(0x9747b28c)
 	_, _ = hash.Write([]byte("Hel"))
 	_, _ = hash.Write([]byte("l"))
 	_, _ = hash.Write([]byte("o"))
@@ -61,7 +62,7 @@ func TestMurmurHash3Uneven(t *testing.T) {
 
 func BenchmarkMurmurHash3(b *testing.B) {
 	var benchmarkString = []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
-	h := NewMurmurHash3(0)
+	h := internal.NewMurmurHash3(0)
 	for i := 0; i < b.N; i++ {
 		_, _ = h.Write(benchmarkString)
 		h.Sum32()

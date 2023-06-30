@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resolver
+package resolver_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/httplb/internal/clocktest"
+	"github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,12 +37,12 @@ func TestResolverTTL(t *testing.T) {
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	resolver := NewDNSResolver(net.DefaultResolver, "ip6", testTTL)
-	resolver.(*pollingResolver).clock = testClock
+	dnsResolver := resolver.NewDNSResolver(net.DefaultResolver, "ip6", testTTL)
+	resolver.SetPollingClock(dnsResolver, testClock)
 
 	signal := make(chan struct{})
-	task := resolver.New(ctx, "http", "::1", testReceiver{
-		onResolve: func(a []Address) {
+	task := dnsResolver.New(ctx, "http", "::1", testReceiver{
+		onResolve: func(a []resolver.Address) {
 			assert.Equal(t, "[::1]:80", a[0].HostPort)
 			signal <- struct{}{}
 		},
@@ -86,11 +87,11 @@ func TestResolverTTL(t *testing.T) {
 }
 
 type testReceiver struct {
-	onResolve      func([]Address)
+	onResolve      func([]resolver.Address)
 	onResolveError func(error)
 }
 
-func (r testReceiver) OnResolve(addresses []Address) {
+func (r testReceiver) OnResolve(addresses []resolver.Address) {
 	r.onResolve(addresses)
 }
 

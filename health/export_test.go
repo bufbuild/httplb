@@ -12,22 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clocktest_test
+package health
 
-import (
-	"testing"
-	"time"
+import "github.com/bufbuild/httplb/internal"
 
-	"github.com/bufbuild/httplb/internal"
-	"github.com/bufbuild/httplb/internal/clocktest"
-)
-
-func TestNewFakeClock(t *testing.T) {
-	t.Parallel()
-
-	// The purpose of this test is to make it obvious if the type assertion
-	// in NewFakeClock()/NewFakeClockAt() ever breaks.
-
-	var _ internal.Clock = clocktest.NewFakeClock()
-	var _ internal.Clock = clocktest.NewFakeClockAt(time.Now())
+// SetPollingClock is a test function that sets the clock on a polling checker.
+func SetPollingClock(checker Checker, clock internal.Clock) {
+	checker.(*pollingChecker).clock = clock
 }

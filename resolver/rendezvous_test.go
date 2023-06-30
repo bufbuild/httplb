@@ -19,7 +19,7 @@ import (
 	"io"
 	"testing"
 
-	. "github.com/bufbuild/httplb/resolver"
+	"github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,17 +30,17 @@ func TestRendezvous(t *testing.T) {
 	refreshCh := make(chan struct{})
 	defer close(refreshCh)
 
-	addrFoo := Address{HostPort: "foo"}
-	addrBar := Address{HostPort: "bar"}
-	addrBaz := Address{HostPort: "baz"}
-	addrQux := Address{HostPort: "qux"}
-	addresses := []Address{addrFoo, addrBar, addrBaz, addrQux}
+	addrFoo := resolver.Address{HostPort: "foo"}
+	addrBar := resolver.Address{HostPort: "bar"}
+	addrBaz := resolver.Address{HostPort: "baz"}
+	addrQux := resolver.Address{HostPort: "qux"}
+	addresses := []resolver.Address{addrFoo, addrBar, addrBaz, addrQux}
 
-	var resolver fakeResolver
-	_, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{})
+	var rootResolver fakeResolver
+	_, err := resolver.RendezvousHashSubsetter(&rootResolver, resolver.RendezvousConfig{})
 	assert.ErrorContains(t, err, "NumBackends must be set")
 
-	subsetterResolver, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{
+	subsetterResolver, err := resolver.RendezvousHashSubsetter(&rootResolver, resolver.RendezvousConfig{
 		NumBackends:  2,
 		SelectionKey: "foo",
 	})
@@ -48,38 +48,38 @@ func TestRendezvous(t *testing.T) {
 	var receiver fakeReceiver
 	_ = subsetterResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
-	resolver.receiver.OnResolve([]Address{addrFoo})
-	assert.Equal(t, receiver.addrs, []Address{addrFoo})
+	rootResolver.receiver.OnResolve([]resolver.Address{addrFoo})
+	assert.Equal(t, receiver.addrs, []resolver.Address{addrFoo})
 
-	resolver.receiver.OnResolve([]Address{addrFoo, addrBar})
-	assert.Equal(t, receiver.addrs, []Address{addrFoo, addrBar})
+	rootResolver.receiver.OnResolve([]resolver.Address{addrFoo, addrBar})
+	assert.Equal(t, receiver.addrs, []resolver.Address{addrFoo, addrBar})
 
-	resolver.receiver.OnResolve(append([]Address{}, addresses...))
+	rootResolver.receiver.OnResolve(append([]resolver.Address{}, addresses...))
 	set1 := receiver.addrs
 	require.Len(t, set1, 2)
 	assert.Contains(t, addresses, set1[0])
 	assert.Contains(t, addresses, set1[1])
 
-	subsetterResolver, err = RendezvousHashSubsetter(&resolver, RendezvousConfig{
+	subsetterResolver, err = resolver.RendezvousHashSubsetter(&rootResolver, resolver.RendezvousConfig{
 		NumBackends:  2,
 		SelectionKey: "bar",
 	})
 	require.NoError(t, err)
 	_ = subsetterResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
-	resolver.receiver.OnResolve(append([]Address{}, addresses...))
+	rootResolver.receiver.OnResolve(append([]resolver.Address{}, addresses...))
 	set2 := receiver.addrs
 	assert.NotEqual(t, set1, set2)
 }
 
 type fakeResolver struct {
-	receiver Receiver
+	receiver resolver.Receiver
 }
 
 func (f *fakeResolver) New(
 	_ context.Context,
 	_, _ string,
-	receiver Receiver,
+	receiver resolver.Receiver,
 	_ <-chan struct{},
 ) io.Closer {
 	f.receiver = receiver
@@ -87,11 +87,11 @@ func (f *fakeResolver) New(
 }
 
 type fakeReceiver struct {
-	addrs []Address
+	addrs []resolver.Address
 	err   error
 }
 
-func (r *fakeReceiver) OnResolve(addrs []Address) {
+func (r *fakeReceiver) OnResolve(addrs []resolver.Address) {
 	r.addrs = addrs
 }
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package health
+package health_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/httplb/conn"
+	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/clocktest"
 	"github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/assert"
@@ -34,8 +35,8 @@ func TestPollingChecker(t *testing.T) {
 	testClock := clocktest.NewFakeClock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
-	checker := NewPollingChecker(PollingCheckerConfig{}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	checker := health.NewPollingChecker(health.PollingCheckerConfig{}, health.NewSimpleProber("/"))
+	health.SetPollingClock(checker, testClock)
 	tracker := make(fakeHealthTracker, 1)
 
 	// StateUnhealthy (HTTP error)
@@ -43,14 +44,14 @@ func TestPollingChecker(t *testing.T) {
 	close(connection)
 	err := checker.New(ctx, connection, tracker).Close()
 	require.NoError(t, err)
-	assert.Equal(t, StateUnhealthy, <-tracker)
+	assert.Equal(t, health.StateUnhealthy, <-tracker)
 
 	// StateUnhealthy (HTTP 5xx)
 	connection = make(fakeConnChan, 1)
 	connection <- &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody}
 	err = checker.New(ctx, connection, tracker).Close()
 	require.NoError(t, err)
-	assert.Equal(t, StateUnhealthy, <-tracker)
+	assert.Equal(t, health.StateUnhealthy, <-tracker)
 	close(connection)
 
 	// StateHealthy (HTTP 2xx)
@@ -58,7 +59,7 @@ func TestPollingChecker(t *testing.T) {
 	connection <- &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
 	err = checker.New(ctx, connection, tracker).Close()
 	require.NoError(t, err)
-	assert.Equal(t, StateHealthy, <-tracker)
+	assert.Equal(t, health.StateHealthy, <-tracker)
 	close(connection)
 }
 
@@ -71,12 +72,12 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	interval := 5 * time.Second
 	testClock := clocktest.NewFakeClock()
 
-	checker := NewPollingChecker(PollingCheckerConfig{
+	checker := health.NewPollingChecker(health.PollingCheckerConfig{
 		PollingInterval:    interval,
 		HealthyThreshold:   2,
 		UnhealthyThreshold: 3,
-	}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	}, health.NewSimpleProber("/"))
+	health.SetPollingClock(checker, testClock)
 
 	connection := make(fakeConnChan)
 	tracker := make(fakeHealthTracker)
@@ -92,7 +93,7 @@ func TestPollingCheckerThresholds(t *testing.T) {
 			t.Fatal("unexpected health state update")
 		}
 	}
-	expectState := func(expected State) {
+	expectState := func(expected health.State) {
 		select {
 		case state := <-tracker:
 			assert.Equal(t, expected, state)
@@ -103,19 +104,19 @@ func TestPollingCheckerThresholds(t *testing.T) {
 
 	// Require only one passing check to become healthy initially
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
-	expectState(StateHealthy)
+	expectState(health.StateHealthy)
 
 	// Require three failing checks to become unhealthy
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody})
-	expectState(StateUnhealthy)
+	expectState(health.StateUnhealthy)
 
 	// Require two checks to become healthy again
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
 	close(connection)
-	expectState(StateHealthy)
+	expectState(health.StateHealthy)
 
 	err := process.Close()
 	require.NoError(t, err)
@@ -143,8 +144,8 @@ func (f fakeConnChan) UpdateAttributes(_ resolver.Attrs) {}
 
 func (f fakeConnChan) Prewarm(_ context.Context) error { return nil }
 
-type fakeHealthTracker chan State
+type fakeHealthTracker chan health.State
 
-func (f fakeHealthTracker) UpdateHealthState(_ conn.Conn, health State) {
+func (f fakeHealthTracker) UpdateHealthState(_ conn.Conn, health health.State) {
 	f <- health
 }
