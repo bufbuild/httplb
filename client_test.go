@@ -17,6 +17,7 @@ package httplb
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -439,6 +440,41 @@ func TestNewClient_Proxy(t *testing.T) {
 	// the other domain, however, will go through our proxy
 	sendGetRequest(t, ctx, client, "http://bar.com/foo", expectSuccess("got it"))
 	require.Equal(t, int32(1), proxyCounter.Load())
+}
+
+func TestNewClient_TLS(t *testing.T) {
+	ensureGoroutinesCleanedUp(t)
+
+	cert, err := tls.X509KeyPair([]byte(localhostCert), []byte(localhostKey))
+	require.NoError(t, err, "loading localhost cert failed")
+
+	ctx := context.Background()
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(([]byte)("success"))
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}} //nolint:gosec
+	server.StartTLS()
+	defer server.Close()
+
+	certpool := x509.NewCertPool()
+	certpool.AddCert(server.Certificate())
+	client := makeClient(t, ctx,
+		WithTLSConfig(&tls.Config{ //nolint:gosec
+			RootCAs: certpool,
+		}, 0),
+		WithResolver(fakeResolver{map[string][]string{
+			"localhost": {"127.0.0.1"},
+		}}),
+	)
+
+	// We really need to make sure the host is resolved to something else so
+	// that we can test to ensure that TLS is handled correctly when requests
+	// are rewritten.
+	url, _ := url.Parse(server.URL)
+	_, port, _ := net.SplitHostPort(url.Host)
+	url.Host = net.JoinHostPort("localhost", port)
+
+	sendGetRequest(t, ctx, client, url.String(), expectSuccess("success"))
 }
 
 func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {
