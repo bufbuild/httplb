@@ -340,7 +340,7 @@ type transportPool struct {
 	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized   chan struct{}
 	resolver            io.Closer
-	reresolve           chan struct{}
+	reresolve           chan<- struct{}
 	balancer            *balancer
 	closeComplete       chan struct{}
 	onClose             func()
@@ -362,7 +362,7 @@ type transportPool struct {
 
 func newTransportPool(
 	ctx context.Context,
-	res resolver.Factory,
+	res resolver.Resolver,
 	pickerFactory picker.Factory,
 	checker health.Checker,
 	dest target,
@@ -372,6 +372,7 @@ func newTransportPool(
 	onClose func(),
 ) *transportPool {
 	pickerInitialized := make(chan struct{})
+	reresolve := make(chan struct{}, 1)
 	pool := &transportPool{
 		dest:                dest,
 		applyRequestTimeout: applyTimeout,
@@ -379,12 +380,12 @@ func newTransportPool(
 		roundTripperOptions: opts,
 		pickerInitialized:   pickerInitialized,
 		closeComplete:       make(chan struct{}),
-		reresolve:           make(chan struct{}, 1),
+		reresolve:           reresolve,
 		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
 	pool.balancer = newBalancer(ctx, pickerFactory, checker, pool)
-	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer, pool.reresolve)
+	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer, reresolve)
 	pool.balancer.start()
 	return pool
 }
@@ -635,7 +636,6 @@ func (t *transportPool) close() {
 	}
 	_ = grp.Wait()
 	close(t.reresolve)
-	<-t.reresolve // drain channel
 	close(t.closeComplete)
 	if t.onClose != nil {
 		t.onClose()

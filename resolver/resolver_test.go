@@ -36,11 +36,11 @@ func TestResolverTTL(t *testing.T) {
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	factory := NewDNSResolverFactory(net.DefaultResolver, "ip6", testTTL)
-	factory.(*pollingResolverFactory).clock = testClock
+	resolver := NewDNSResolver(net.DefaultResolver, "ip6", testTTL)
+	resolver.(*pollingResolver).clock = testClock
 
 	signal := make(chan struct{})
-	resolver := factory.New(ctx, "http", "::1", testReceiver{
+	task := resolver.New(ctx, "http", "::1", testReceiver{
 		onResolve: func(a []Address) {
 			assert.Equal(t, "::1", a[0].HostPort)
 			signal <- struct{}{}
@@ -59,7 +59,7 @@ func TestResolverTTL(t *testing.T) {
 
 	t.Cleanup(func() {
 		close(signal)
-		err := resolver.Close()
+		err := task.Close()
 		close(refreshCh)
 		require.NoError(t, err)
 	})

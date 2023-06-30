@@ -17,11 +17,11 @@
 // into one or more addresses -- where an address is a host:port (and
 // optionally custom metadata) of a server that provides the service.
 //
-// It contains core interfaces ([Factory], [Resolver]) that can be
-// implemented to create a custom name resolution strategy. The interface
-// is general enough that it can support any form of resolver, including
-// ones that are backed by push mechanisms (like "watching" nodes in
-// ZooKeeper ord etcd or "watching" resources in Kubernetes).
+// It contains the core interface ([Resolver]) that can be implemented
+// to create a custom name resolution strategy. The interface is general
+// enough that it can support any form of resolver, including ones that
+// are backed by push mechanisms (like "watching" nodes in ZooKeeper or
+// etcd or "watching" resources in Kubernetes).
 //
 // # Default Implementation
 //
@@ -31,10 +31,9 @@
 //
 // To create a new resolver implementation that uses periodic polling,
 // you need only implement the [ResolveProber] interface and use your
-// implementation with NewPollingResolverFactory. To create a more
-// sophisticated implementation, you would need to implement the
-// [Factory] interface, which creates a new [Resolver] for each service
-// or domain that a client needs.
+// implementation with NewPollingResolver. To create a more sophisticated
+// implementation, you would need to implement the [Resolver] interface,
+// which creates a new task for each service or domain that a client needs.
 //
 // # Type-Safe Attributes
 //
@@ -77,13 +76,13 @@
 // addresses, selects a subset, and sends the subset to the underlying Receiver.
 //
 // This decorator pattern is implemented by RendezvousHashSubsetter, which
-// is a Factory decorator. When the factory's New method is called, it wraps
+// is a Resolver decorator. When the resolver's New method is called, it wraps
 // the given Receiver with a decorator that computes the subset using
 // rendezvous-hashing. It then passes that decorated Receiver to the underlying
-// Factory.
+// Resolver.
 //
 // For decorators that use resources (such as background goroutines) and need
-// to be explicitly shut down to release those resources, the Factory interface
+// to be explicitly shut down to release those resources, the Resolver interface
 // should be decorated, just as is done by RendezvousHashSubsetter. That way,
 // any Resolver instances created can also be decorated, in order to hook into
 // their Close method. When the Resolver for a corresponding Receiver is closed,

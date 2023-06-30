@@ -26,13 +26,13 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-// RendezvousHashSubsetter returns a Factory that creates Resolver instances
+// RendezvousHashSubsetter returns a Resolver that creates Resolver instances
 // that uses rendezvous hashing to pick a randomly-distributed but consistent
 // subset of k hosts. When provided the same selection key and k value, it
 // will return the same addresses. When an address is removed, all of the
 // requests that would have been directed to it will be distributed randomly
 // to other addresses.
-func RendezvousHashSubsetter(factory Factory, options RendezvousConfig) (Factory, error) {
+func RendezvousHashSubsetter(resolver Resolver, options RendezvousConfig) (Resolver, error) {
 	if options.SelectionKey == "" {
 		randomKey, err := randomKey()
 		if err != nil {
@@ -46,11 +46,11 @@ func RendezvousHashSubsetter(factory Factory, options RendezvousConfig) (Factory
 	if options.Hash == nil {
 		options.Hash = internal.NewMurmurHash3(0)
 	}
-	return &rendezvousSubsetFactory{
-		factory: factory,
-		key:     []byte(options.SelectionKey),
-		k:       options.NumBackends,
-		hash:    options.Hash,
+	return &rendezvousSubsetResolver{
+		resolver: resolver,
+		key:      []byte(options.SelectionKey),
+		k:        options.NumBackends,
+		hash:     options.Hash,
 	}, nil
 }
 
@@ -71,18 +71,18 @@ type RendezvousConfig struct {
 	Hash hash.Hash32
 }
 
-type rendezvousSubsetFactory struct {
-	factory Factory
-	key     []byte
-	k       int
-	hash    hash.Hash32
+type rendezvousSubsetResolver struct {
+	resolver Resolver
+	key      []byte
+	k        int
+	hash     hash.Hash32
 }
 
-func (s *rendezvousSubsetFactory) New(
+func (s *rendezvousSubsetResolver) New(
 	ctx context.Context,
 	scheme, hostPort string,
 	receiver Receiver,
-	refresh chan struct{},
+	refresh <-chan struct{},
 ) io.Closer {
 	rcv := &rendezvousSubsetReceiver{
 		Receiver: receiver,
@@ -90,7 +90,7 @@ func (s *rendezvousSubsetFactory) New(
 		k:        s.k,
 		hash:     s.hash,
 	}
-	return s.factory.New(ctx, scheme, hostPort, rcv, refresh)
+	return s.resolver.New(ctx, scheme, hostPort, rcv, refresh)
 }
 
 type rendezvousSubsetReceiver struct {

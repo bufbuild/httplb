@@ -36,51 +36,51 @@ func TestRendezvous(t *testing.T) {
 	addrQux := Address{HostPort: "qux"}
 	addresses := []Address{addrFoo, addrBar, addrBaz, addrQux}
 
-	var factory fakeFactory
-	_, err := RendezvousHashSubsetter(&factory, RendezvousConfig{})
+	var resolver fakeResolver
+	_, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{})
 	assert.ErrorContains(t, err, "NumBackends must be set")
 
-	subsetterFactory, err := RendezvousHashSubsetter(&factory, RendezvousConfig{
+	subsetterResolver, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{
 		NumBackends:  2,
 		SelectionKey: "foo",
 	})
 	require.NoError(t, err)
 	var receiver fakeReceiver
-	_ = subsetterFactory.New(context.Background(), "", "", &receiver, refreshCh)
+	_ = subsetterResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
-	factory.receiver.OnResolve([]Address{addrFoo})
+	resolver.receiver.OnResolve([]Address{addrFoo})
 	assert.Equal(t, receiver.addrs, []Address{addrFoo})
 
-	factory.receiver.OnResolve([]Address{addrFoo, addrBar})
+	resolver.receiver.OnResolve([]Address{addrFoo, addrBar})
 	assert.Equal(t, receiver.addrs, []Address{addrFoo, addrBar})
 
-	factory.receiver.OnResolve(append([]Address{}, addresses...))
+	resolver.receiver.OnResolve(append([]Address{}, addresses...))
 	set1 := receiver.addrs
 	require.Len(t, set1, 2)
 	assert.Contains(t, addresses, set1[0])
 	assert.Contains(t, addresses, set1[1])
 
-	subsetterFactory, err = RendezvousHashSubsetter(&factory, RendezvousConfig{
+	subsetterResolver, err = RendezvousHashSubsetter(&resolver, RendezvousConfig{
 		NumBackends:  2,
 		SelectionKey: "bar",
 	})
 	require.NoError(t, err)
-	_ = subsetterFactory.New(context.Background(), "", "", &receiver, refreshCh)
+	_ = subsetterResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
-	factory.receiver.OnResolve(append([]Address{}, addresses...))
+	resolver.receiver.OnResolve(append([]Address{}, addresses...))
 	set2 := receiver.addrs
 	assert.NotEqual(t, set1, set2)
 }
 
-type fakeFactory struct {
+type fakeResolver struct {
 	receiver Receiver
 }
 
-func (f *fakeFactory) New(
+func (f *fakeResolver) New(
 	_ context.Context,
 	_, _ string,
 	receiver Receiver,
-	_ chan struct{},
+	_ <-chan struct{},
 ) io.Closer {
 	f.receiver = receiver
 	return nil
