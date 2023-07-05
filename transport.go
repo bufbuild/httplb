@@ -44,7 +44,7 @@ var (
 //nolint:gochecknoglobals
 var requestPool = sync.Pool{
 	New: func() any {
-		return new(http.Request)
+		return &http.Request{URL: &url.URL{}}
 	},
 }
 
@@ -538,10 +538,14 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	var requestClone *http.Request
 	chosenScheme, chosenAddr := chosen.Scheme(), chosen.Address().HostPort
 	if (chosenScheme != "" && request.URL.Scheme != chosenScheme) || request.URL.Host != chosenAddr || request.Host == "" {
-		// Don't use request.Clone: We only need a shallow copy, but
-		// request.Clone does a deep copy (headers, etc.)
+		// Don't use request.Clone: We only need to clone the base Request and
+		// URL. The requestPool gives us requests with a new URL, so we need to
+		// restore the URL pointer after doing a shallow copy.
 		requestClone = requestPool.Get().(*http.Request) //nolint:errcheck,forcetypeassert // guaranteed to be *http.Request
+		requestURL := requestClone.URL
+		*requestURL = *request.URL
 		*requestClone = *request
+		requestClone.URL = requestURL
 		request = requestClone
 		if chosenScheme != "" {
 			request.URL.Scheme = chosenScheme

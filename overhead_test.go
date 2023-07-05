@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/bufbuild/httplb"
+	"github.com/stretchr/testify/require"
 )
 
 type noopRoundtripper struct {
@@ -40,23 +41,27 @@ func (n noopRoundtripper) New(string, string, httplb.RoundTripperOptions) httplb
 }
 
 func BenchmarkNoOpTransportHTTPLB(b *testing.B) {
-	warmCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	client := httplb.NewClient(
 		httplb.WithRoundTripperFactory("http", noopRoundtripper{}),
 		httplb.WithBackendTarget("http", "localhost:0"),
 	)
+	warmCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	err := client.Prewarm(warmCtx)
 	cancel()
-	if err != nil {
-		b.Fatal("Failed to prewarm client.")
-	}
+	require.NoError(b, err)
 	b.SetParallelism(100)
 	b.ResetTimer()
 	b.RunParallel(func(p *testing.PB) {
 		for p.Next() {
-			req, _ := http.NewRequestWithContext(context.TODO(), http.MethodGet, "http://localhost:0/", nil)
-			resp, _ := client.Do(req)
-			resp.Body.Close()
+			request, err := http.NewRequestWithContext(context.TODO(), http.MethodGet, "http://localhost:0/", nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				b.Fatal(err)
+			}
+			response.Body.Close()
 		}
 	})
 }
@@ -68,9 +73,15 @@ func BenchmarkNoOpTransportNetHTTP(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(p *testing.PB) {
 		for p.Next() {
-			req, _ := http.NewRequestWithContext(context.TODO(), http.MethodGet, "http://localhost:0/", nil)
-			resp, _ := client.Do(req)
-			resp.Body.Close()
+			request, err := http.NewRequestWithContext(context.TODO(), http.MethodGet, "http://localhost:0/", nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				b.Fatal(err)
+			}
+			response.Body.Close()
 		}
 	})
 }
