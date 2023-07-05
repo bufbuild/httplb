@@ -41,6 +41,13 @@ var (
 	errTryAgain          = errors.New("internal: leaf transport closed; try again")
 )
 
+//nolint:gochecknoglobals
+var requestPool = sync.Pool{
+	New: func() any {
+		return &http.Request{URL: &url.URL{}}
+	},
+}
+
 // mainTransport is the root of the transport hierarchy. For each target
 // backend (scheme + host:port), it maintains a transportPool. It
 // implements http.RoundTripper and is used as the transport for clients
@@ -528,9 +535,18 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 
 	// rewrite request if necessary
+	var requestClone *http.Request
 	chosenScheme, chosenAddr := chosen.Scheme(), chosen.Address().HostPort
 	if (chosenScheme != "" && request.URL.Scheme != chosenScheme) || request.URL.Host != chosenAddr || request.Host == "" {
-		request = request.Clone(request.Context())
+		// Don't use request.Clone: We only need to clone the base Request and
+		// URL. The requestPool gives us requests with a new URL, so we need to
+		// restore the URL pointer after doing a shallow copy.
+		requestClone = requestPool.Get().(*http.Request) //nolint:errcheck,forcetypeassert // guaranteed to be *http.Request
+		requestURL := requestClone.URL
+		*requestURL = *request.URL
+		*requestClone = *request
+		requestClone.URL = requestURL
+		request = requestClone
 		if chosenScheme != "" {
 			request.URL.Scheme = chosenScheme
 		}
@@ -548,6 +564,9 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 		}
 		if whenDone != nil {
 			whenDone()
+		}
+		if requestClone != nil {
+			requestPool.Put(requestClone)
 		}
 	})
 }
