@@ -41,6 +41,7 @@ var (
 	errTryAgain          = errors.New("internal: leaf transport closed; try again")
 )
 
+//nolint:gochecknoglobals
 var requestPool = sync.Pool{
 	New: func() any {
 		return new(http.Request)
@@ -539,7 +540,7 @@ func (t *transportPool) RoundTrip(request *http.Request) (*http.Response, error)
 	if (chosenScheme != "" && request.URL.Scheme != chosenScheme) || request.URL.Host != chosenAddr || request.Host == "" {
 		// Don't use request.Clone: We only need a shallow copy, but
 		// request.Clone does a deep copy (headers, etc.)
-		requestClone = requestPool.Get().(*http.Request)
+		requestClone = requestPool.Get().(*http.Request) //nolint:errcheck,forcetypeassert // guaranteed to be *http.Request
 		*requestClone = *request
 		request = requestClone
 		if chosenScheme != "" {
