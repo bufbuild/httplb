@@ -42,6 +42,7 @@ generate: $(BIN)/license-header ## Regenerate code and licenses
 	@# those only in the second file (-2). We make one git-ls-files call for
 	@# the modified, cached, and new (--others) files, and a second for the
 	@# deleted files.
+	go mod tidy
 	comm -23 \
 		<(git ls-files --cached --modified --others --no-empty-directory --exclude-standard | sort -u | grep -v $(LICENSE_IGNORE) ) \
 		<(git ls-files --deleted | sort -u) | \
