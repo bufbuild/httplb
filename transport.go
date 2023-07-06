@@ -411,10 +411,12 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 		return nil, false
 	}
 
-	// NOTE: The Go HTTP2 client does NOT defensively clone the TLS config
-	// before it attempts to mutate it, so we can't share the same TLS config
-	// across multiple connections right now.
-	// TODO: file upstream bug?
+	// NOTE: When using ForceAttemptHTTP2, Go can mutate the TLSClientConfig
+	// without first making a defensive copy. This is intended, though not
+	// documented.
+	// https://github.com/golang/go/issues/14275
+	// TODO: Possibly move to factory, since that's where ForceAttemptHTTP2 is
+	// actually set?
 	opts := t.roundTripperOptions
 	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
 
