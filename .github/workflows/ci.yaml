@@ -22,15 +22,9 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-      - name: Cache
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-httplb-ci-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-httplb-ci-
       - name: Test
         run: make test
       - name: Lint
