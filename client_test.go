@@ -296,7 +296,7 @@ func TestNewClient_CustomRoundTripper(t *testing.T) {
 			return RoundTripperResult{
 				RoundTripper: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 					recorder := httptest.NewRecorder()
-					_, _ = recorder.Write([]byte("foo bar"))
+					_, _ = recorder.WriteString("foo bar")
 					return recorder.Result(), nil
 				}),
 			}

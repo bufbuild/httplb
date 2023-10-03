@@ -28,6 +28,7 @@ linters:
   enable-all: true
   disable:
     - cyclop            # covered by gocyclo
+    - depguard          # unnecessary for small libraries
     - deadcode          # abandoned
     - exhaustivestruct  # replaced by exhaustruct
     - exhaustruct       # not helpful, prevents idiomatic struct literals
