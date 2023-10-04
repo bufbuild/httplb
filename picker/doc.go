@@ -16,13 +16,13 @@
 // This is used by an httplb.Client to actually select a connection for
 // use with a given request.
 //
-// This package defines the core interface, [Picker], as well as the
-// interface used by a client to construct a [Picker]: [Factory].
+// This package defines the core interface, [Picker], which is used to
+// select a single connection, from multiple connections in a pool.
 //
 // This package also contains numerous implementations, all in the form
-// of various [Factory] instances. Each factory produces pickers that
-// implement a particular picking algorithm, like round-robin, random,
-// or least-loaded.
+// of various functions whose names start with "New". Each such function
+// produces pickers that implement a particular picking algorithm, like
+// round-robin, random, or least-loaded.
 //
 // None of the provided implementations in this package make use of
 // custom metadata (attribute.Values) for an address. But custom [Picker]

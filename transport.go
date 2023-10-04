@@ -235,7 +235,7 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	pool = newTransportPool(
 		m.rootCtx,
 		targetOpts.resolver,
-		targetOpts.picker,
+		targetOpts.newPicker,
 		targetOpts.healthChecker,
 		dest,
 		applyTimeout,
@@ -385,7 +385,7 @@ type transportPool struct {
 func newTransportPool(
 	ctx context.Context,
 	res resolver.Resolver,
-	pickerFactory picker.Factory,
+	newPicker func(prev picker.Picker, allConns conn.Conns) picker.Picker,
 	checker health.Checker,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
@@ -406,7 +406,7 @@ func newTransportPool(
 		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
-	pool.balancer = newBalancer(ctx, pickerFactory, checker, pool)
+	pool.balancer = newBalancer(ctx, newPicker, checker, pool)
 	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer, reresolve)
 	pool.balancer.start()
 	return pool

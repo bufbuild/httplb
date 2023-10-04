@@ -21,15 +21,9 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-//nolint:gochecknoglobals
-var (
-	// RandomFactory creates pickers that picks a connections at random.
-	RandomFactory Factory = &randomFactory{}
-)
-
-type randomFactory struct{}
-
-func (r randomFactory) New(_ Picker, allConns conn.Conns) Picker {
+// NewRandom creates pickers that picks a connections at random.
+func NewRandom(prev Picker, allConns conn.Conns) Picker {
+	_ = prev // we need prev so function matches "factory" function signature
 	rnd := internal.NewLockedRand()
 	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
 		return allConns.Get(rnd.Intn(allConns.Len())), nil, nil

@@ -32,7 +32,7 @@ func TestRandomPicker(t *testing.T) {
 	t.Parallel()
 
 	dummyConn := conn.Conn(nil)
-	conn, _, err := picker.RandomFactory.New(nil, dummyConns{[]conn.Conn{dummyConn}}).Pick(&http.Request{})
+	conn, _, err := picker.NewRandom(nil, dummyConns{[]conn.Conn{dummyConn}}).Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, conn)
 }

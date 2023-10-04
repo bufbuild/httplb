@@ -34,12 +34,6 @@ import (
 	"github.com/bufbuild/httplb/resolver"
 )
 
-//nolint:gochecknoglobals
-var (
-	// FakePickerFactory returns instances of *FakePicker.
-	FakePickerFactory picker.Factory = fakePickerFactory{}
-)
-
 // FakeConn is an implementation of conn.Conn that can be used for testing.
 // It is not usable for actual request traffic: attempts to call its
 // RoundTrip method will always result in error.
@@ -282,13 +276,18 @@ type PickerState struct {
 // returns the first picker it encounters in its set. Its set is exported so test
 // code can examine the set of connections used to create the picker.
 //
-// Also see FakePickerFactory.
+// Also see NewFakePicker.
 type FakePicker struct {
 	Conns conns.Set
 }
 
 // NewFakePicker constructs a new FakePicker with the given connections.
-func NewFakePicker(connections conn.Conns) *FakePicker {
+//
+// The return type is picker.Picker so this function can be directly used as
+// a "new picker" function with a balancer. But this function *always*
+// returns values whose type is *FakePicker.
+func NewFakePicker(prev picker.Picker, connections conn.Conns) picker.Picker {
+	_ = prev // we need prev so function matches "factory" function signature
 	return &FakePicker{Conns: conns.ToSet(connections)}
 }
 
@@ -298,12 +297,6 @@ func (p *FakePicker) Pick(*http.Request) (conn conn.Conn, whenDone func(), err e
 		return c, nil, nil
 	}
 	return nil, nil, errors.New("zero conns")
-}
-
-type fakePickerFactory struct{}
-
-func (f fakePickerFactory) New(_ picker.Picker, allConns conn.Conns) picker.Picker {
-	return NewFakePicker(allConns)
 }
 
 // ConnHealth is map that tracks the health state of connections.

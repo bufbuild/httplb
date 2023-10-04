@@ -24,22 +24,44 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-//nolint:gochecknoglobals
-var (
-	// LeastLoadedRoundRobinFactory creates pickers that pick the connection
-	// with the least in-flight requests. When a tie occurs, tied hosts will be
-	// picked in an arbitrary but sequential order.
-	LeastLoadedRoundRobinFactory Factory = &leastLoadedRoundRobinFactory{}
+// NewLeastLoadedRoundRobin creates pickers that pick the connection
+// with the least in-flight requests. When a tie occurs, tied hosts will be
+// picked in an arbitrary but sequential order.
+func NewLeastLoadedRoundRobin(prev Picker, allConns conn.Conns) Picker {
+	if prev, ok := prev.(*leastLoadedRoundRobin); ok {
+		prev.mu.Lock()
+		defer prev.mu.Unlock()
 
-	// LeastLoadedRandomFactory creates pickers that pick the connection with
-	// the least in-flight requests. When a tie occurs, tied hosts will be
-	// picked at random.
-	LeastLoadedRandomFactory Factory = &leastLoadedRandomFactory{}
-)
+		prev.conns.update(allConns)
+		return prev
+	}
 
-type leastLoadedRoundRobinFactory struct{}
+	return &leastLoadedRoundRobin{
+		leastLoadedBase: leastLoadedBase{
+			conns: newConnHeap(allConns),
+		},
+	}
+}
 
-type leastLoadedRandomFactory struct{}
+// NewLeastLoadedRandom creates pickers that pick the connection with
+// the least in-flight requests. When a tie occurs, tied hosts will be
+// picked at random.
+func NewLeastLoadedRandom(prev Picker, allConns conn.Conns) Picker {
+	if prev, ok := prev.(*leastLoadedRandom); ok {
+		prev.mu.Lock()
+		defer prev.mu.Unlock()
+
+		prev.conns.update(allConns)
+		return prev
+	}
+
+	return &leastLoadedRandom{
+		leastLoadedBase: leastLoadedBase{
+			conns: newConnHeap(allConns),
+		},
+		rng: internal.NewRand(),
+	}
+}
 
 type leastLoadedBase struct {
 	mu sync.Mutex
@@ -66,39 +88,6 @@ type leastLoadedConnItem struct {
 	load     uint64
 	tiebreak uint64
 	index    int
-}
-
-func (f leastLoadedRoundRobinFactory) New(prev Picker, allConns conn.Conns) Picker {
-	if prev, ok := prev.(*leastLoadedRoundRobin); ok {
-		prev.mu.Lock()
-		defer prev.mu.Unlock()
-
-		prev.conns.update(allConns)
-		return prev
-	}
-
-	return &leastLoadedRoundRobin{
-		leastLoadedBase: leastLoadedBase{
-			conns: newConnHeap(allConns),
-		},
-	}
-}
-
-func (f leastLoadedRandomFactory) New(prev Picker, allConns conn.Conns) Picker {
-	if prev, ok := prev.(*leastLoadedRandom); ok {
-		prev.mu.Lock()
-		defer prev.mu.Unlock()
-
-		prev.conns.update(allConns)
-		return prev
-	}
-
-	return &leastLoadedRandom{
-		leastLoadedBase: leastLoadedBase{
-			conns: newConnHeap(allConns),
-		},
-		rng: internal.NewRand(),
-	}
 }
 
 // +checklocks:p.mu

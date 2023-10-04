@@ -206,7 +206,7 @@ func TestConnManager(t *testing.T) {
 func TestBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
 	pool := balancertesting.NewFakeConnPool()
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, health.NoOpChecker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NoOpChecker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.start()
 	// Initial resolve
@@ -285,7 +285,7 @@ func TestBalancer_HealthChecking(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.start()
 
@@ -390,7 +390,7 @@ func TestDefaultBalancer_Reresolve(t *testing.T) {
 	clock := clocktest.NewFakeClock()
 	pool := balancertesting.NewFakeConnPool()
 
-	balancer := newBalancer(context.Background(), balancertesting.FakePickerFactory, checker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.clock = clock
 	balancer.start()

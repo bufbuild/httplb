@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
@@ -203,12 +204,12 @@ func WithResolver(res resolver.Resolver) TargetOption {
 	})
 }
 
-// WithPicker configures the HTTP client to use the given picker.Factory.
-// The factory is used to create a new picker every time the set of usable
-// connections changes for a target.
-func WithPicker(picker picker.Factory) TargetOption {
+// WithPicker configures the HTTP client to use the given function to create
+// picker instances. The factory is invoked to create a new picker every time
+// the set of usable connections changes for a target.
+func WithPicker(newPicker func(prev picker.Picker, allConns conn.Conns) picker.Picker) TargetOption {
 	return targetOptionFunc(func(opts *targetOptions) {
-		opts.picker = picker
+		opts.newPicker = newPicker
 	})
 }
 
@@ -467,7 +468,7 @@ func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
 
 type targetOptions struct {
 	resolver                resolver.Resolver
-	picker                  picker.Factory
+	newPicker               func(prev picker.Picker, allConns conn.Conns) picker.Picker
 	healthChecker           health.Checker
 	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
 	proxyFunc               func(*http.Request) (*url.URL, error)
@@ -485,8 +486,8 @@ func (opts *targetOptions) applyDefaults() {
 	if opts.resolver == nil {
 		opts.resolver = defaultResolver
 	}
-	if opts.picker == nil {
-		opts.picker = picker.RoundRobinFactory
+	if opts.newPicker == nil {
+		opts.newPicker = picker.NewRoundRobin
 	}
 	if opts.healthChecker == nil {
 		opts.healthChecker = health.NoOpChecker
