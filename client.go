@@ -137,17 +137,17 @@ func WithIdleTransportTimeout(duration time.Duration) ClientOption {
 	})
 }
 
-// WithRoundTripperFactory returns an option that uses a custom factory
-// for [http.RoundTripper] instances for the given URL scheme. This allows
-// one to override the default factories for "http", "https", and "h2c"
-// schemes and also allows one to support custom URL schemes that map to
-// custom transports created by the given factory.
-func WithRoundTripperFactory(scheme string, factory RoundTripperFactory) ClientOption {
+// WithTransport returns an option that uses a custom transport to create
+// [http.RoundTripper] instances for the given URL scheme. This allows
+// one to override the default implementations for "http", "https", and
+// "h2c" schemes and also allows one to support custom URL schemes that
+// map to these custom transports.
+func WithTransport(scheme string, transport Transport) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		if opts.schemes == nil {
-			opts.schemes = map[string]RoundTripperFactory{}
+			opts.schemes = map[string]Transport{}
 		}
-		opts.schemes[scheme] = factory
+		opts.schemes[scheme] = transport
 	})
 }
 
@@ -373,7 +373,7 @@ type clientOptions struct {
 	idleTransportTimeout time.Duration
 	// if true, only targets configured below are allowed; requests to others will fail
 	disallowOthers bool
-	schemes        map[string]RoundTripperFactory
+	schemes        map[string]Transport
 
 	// target options are accumulated in these
 	defaultTargetOptions []TargetOption
@@ -392,17 +392,17 @@ func (opts *clientOptions) applyDefaults() {
 		opts.idleTransportTimeout = 15 * time.Minute
 	}
 	if opts.schemes == nil {
-		opts.schemes = map[string]RoundTripperFactory{}
+		opts.schemes = map[string]Transport{}
 	}
 	// put default factories for http, https, and h2c if necessary
 	if _, ok := opts.schemes["http"]; !ok {
-		opts.schemes["http"] = simpleFactory{}
+		opts.schemes["http"] = simpleTransport{}
 	}
 	if _, ok := opts.schemes["https"]; !ok {
-		opts.schemes["https"] = simpleFactory{}
+		opts.schemes["https"] = simpleTransport{}
 	}
 	if _, ok := opts.schemes["h2c"]; !ok {
-		opts.schemes["h2c"] = h2cFactory{}
+		opts.schemes["h2c"] = h2cTransport{}
 	}
 }
 

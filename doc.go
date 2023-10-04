@@ -93,10 +93,10 @@
 //
 // # Custom Transports
 //
-// One of the options in this package, [WithRoundTripperFactory], allows
-// users to implement custom transports and select them using custom URL
-// schemes. This could be used, for example, to enable HTTP/3 with a URL
-// like "http3://...".
+// One of the options in this package, [WithTransport], allows users to
+// implement custom transports and select them using custom URL schemes.
+// This could be used, for example, to enable HTTP/3 with a URL such as
+// "http3://...".
 //
 // This package even uses this capability to provide simple use of HTTP/2
 // over plaintext, also called "h2c". In addition to supporting "http" and

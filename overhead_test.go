@@ -24,25 +24,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type noopRoundtripper struct {
+type noopTransport struct{}
+
+func (n noopTransport) NewRoundTripper(string, string, httplb.TransportConfig) httplb.RoundTripperResult {
+	return httplb.RoundTripperResult{
+		RoundTripper: n,
+	}
 }
 
-func (noopRoundtripper) RoundTrip(*http.Request) (*http.Response, error) {
+func (noopTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	response := new(http.Response)
 	response.StatusCode = 200
 	response.Body = http.NoBody
 	return response, nil
 }
 
-func (n noopRoundtripper) New(string, string, httplb.RoundTripperOptions) httplb.RoundTripperResult {
-	return httplb.RoundTripperResult{
-		RoundTripper: n,
-	}
-}
-
 func BenchmarkNoOpTransportHTTPLB(b *testing.B) {
 	client := httplb.NewClient(
-		httplb.WithRoundTripperFactory("http", noopRoundtripper{}),
+		httplb.WithTransport("http", noopTransport{}),
 		httplb.WithBackendTarget("http", "localhost:0"),
 	)
 	warmCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -68,7 +67,7 @@ func BenchmarkNoOpTransportHTTPLB(b *testing.B) {
 
 func BenchmarkNoOpTransportNetHTTP(b *testing.B) {
 	client := new(http.Client)
-	client.Transport = noopRoundtripper{}
+	client.Transport = noopTransport{}
 	b.SetParallelism(100)
 	b.ResetTimer()
 	b.RunParallel(func(p *testing.PB) {

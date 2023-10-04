@@ -188,9 +188,9 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	var dialCount atomic.Int32
 	tlsConf := &tls.Config{ServerName: "example.com"} //nolint:gosec
 	client := makeClient(t, ctx,
-		WithRoundTripperFactory("http", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
+		WithTransport("http", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
 			latestOptions.Store(target, options)
-			result := simpleFactory{}.New(scheme, target, options)
+			result := simpleTransport{}.NewRoundTripper(scheme, target, options)
 			latestResults.Store(target, result)
 			return result
 		})),
@@ -213,7 +213,7 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	// make sure round tripper options were all defaults
 	val, ok := latestOptions.Load(addr1)
 	require.True(t, ok)
-	rtOpts := val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts := val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -242,7 +242,7 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	// same defaults as above, except KeepWarm is false
 	val, ok = latestOptions.Load(addr3)
 	require.True(t, ok)
-	rtOpts = val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts = val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -259,7 +259,7 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	// check that the options match what was configured above
 	val, ok = latestOptions.Load(addr2)
 	require.True(t, ok)
-	rtOpts = val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts = val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.NotEqual(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -292,7 +292,7 @@ func TestNewClient_CustomRoundTripper(t *testing.T) {
 
 	ctx := context.Background()
 	client := makeClient(t, ctx,
-		WithRoundTripperFactory("foo", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
+		WithTransport("foo", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
 			return RoundTripperResult{
 				RoundTripper: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 					recorder := httptest.NewRecorder()
@@ -708,9 +708,9 @@ type fakeResolverTask struct{}
 
 func (n fakeResolverTask) Close() error { return nil }
 
-type roundTripperFactoryFunc func(scheme, target string, options RoundTripperOptions) RoundTripperResult
+type transportFunc func(scheme, target string, options TransportConfig) RoundTripperResult
 
-func (f roundTripperFactoryFunc) New(scheme, target string, options RoundTripperOptions) RoundTripperResult {
+func (f transportFunc) NewRoundTripper(scheme, target string, options TransportConfig) RoundTripperResult {
 	return f(scheme, target, options)
 }
 
