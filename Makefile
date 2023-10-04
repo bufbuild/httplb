@@ -7,10 +7,10 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 MAKEFLAGS += --no-print-directory
 BIN := .tmp/bin
+export PATH := $(BIN):$(PATH)
+export GOBIN := $(abspath $(BIN))
 COPYRIGHT_YEARS := 2023
-LICENSE_IGNORE := -e testdata/
-# Set to use a different compiler. For example, `GO=go1.18rc1 make test`.
-GO ?= go
+LICENSE_IGNORE := --ignore /testdata/
 
 .PHONY: help
 help: ## Describe useful make targets
@@ -28,47 +28,37 @@ clean: ## Delete intermediate build artifacts
 
 .PHONY: test
 test: build ## Run unit tests
-	$(GO) test -vet=off -race -cover ./...
+	go test -vet=off -race -cover ./...
 
 .PHONY: build
 build: generate ## Build all packages
-	$(GO) build ./...
+	go build ./...
 
 .PHONY: generate
 generate: $(BIN)/license-header ## Regenerate code and licenses
 	go mod tidy
-	@# We want to operate on a list of modified and new files, excluding
-	@# deleted and ignored files. git-ls-files can't do this alone. comm -23 takes
-	@# two files and prints the union, dropping lines common to both (-3) and
-	@# those only in the second file (-2). We make one git-ls-files call for
-	@# the modified, cached, and new (--others) files, and a second for the
-	@# deleted files.
-	comm -23 \
-		<(git ls-files --cached --modified --others --no-empty-directory --exclude-standard | sort -u | grep -v $(LICENSE_IGNORE) ) \
-		<(git ls-files --deleted | sort -u) | \
-		xargs $(BIN)/license-header \
-			--license-type apache \
-			--copyright-holder "Buf Technologies, Inc." \
-			--year-range "$(COPYRIGHT_YEARS)"
+	license-header \
+		--license-type apache \
+		--copyright-holder "Buf Technologies, Inc." \
+		--year-range "$(COPYRIGHT_YEARS)" $(LICENSE_IGNORE)
 
 .PHONY: lint
 lint: $(BIN)/golangci-lint $(BIN)/checklocks ## Lint
-	$(GO) vet ./...
-	$(GO) vet -vettool=$(BIN)/checklocks ./...
-	$(BIN)/golangci-lint run
+	go vet ./...
+	go vet -vettool=$(BIN)/checklocks ./...
+	golangci-lint run
 
 .PHONY: lintfix
 lintfix: $(BIN)/golangci-lint ## Automatically fix some lint errors
-	$(BIN)/golangci-lint run --fix
+	golangci-lint run --fix
 
 .PHONY: install
 install: ## Install all binaries
-	$(GO) install ./...
+	go install ./...
 
 .PHONY: upgrade
 upgrade: ## Upgrade dependencies
-	go get -u -t ./...
-	go mod tidy -v
+	go get -u -t ./... && go mod tidy -v
 
 .PHONY: checkgenerate
 checkgenerate:
@@ -77,13 +67,12 @@ checkgenerate:
 
 $(BIN)/license-header: Makefile
 	@mkdir -p $(@D)
-	GOBIN=$(abspath $(@D)) $(GO) install \
-		  github.com/bufbuild/buf/private/pkg/licenseheader/cmd/license-header@v1.12.0
+	go install github.com/bufbuild/buf/private/pkg/licenseheader/cmd/license-header@v1.26.1
 
 $(BIN)/golangci-lint: Makefile
 	@mkdir -p $(@D)
-	GOBIN=$(abspath $(@D)) $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.52.0
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.54.1
 
 $(BIN)/checklocks: Makefile
 	@mkdir -p $(@D)
-	GOBIN="$(abspath $(@D))" $(GO) install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20230606234206-115cc12055ce
+	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20231003185701-9d5198a863bf
