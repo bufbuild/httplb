@@ -25,7 +25,7 @@
 // or least-loaded.
 //
 // None of the provided implementations in this package make use of
-// custom metadata (resolver.Attrs) for an address. But custom [Picker]
+// custom metadata (attribute.Values) for an address. But custom [Picker]
 // implementations could, for example to prefer backends in clusters
 // that are geographically closer, or to implement custom affinity
 // policies, or even to implement weighted selection algorithms in

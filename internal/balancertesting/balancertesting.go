@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/conns"
@@ -65,9 +66,9 @@ func (c *FakeConn) Address() resolver.Address {
 
 // UpdateAttributes implements the conn.Conn interface. It updates the
 // attributes on this connection's associated address.
-func (c *FakeConn) UpdateAttributes(attrs resolver.Attrs) {
+func (c *FakeConn) UpdateAttributes(values attribute.Values) {
 	addr := c.Address()
-	addr.Attributes = attrs
+	addr.Attributes = values
 	c.addr.Store(&addr)
 }
 

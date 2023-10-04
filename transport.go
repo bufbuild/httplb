@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal"
@@ -692,7 +693,7 @@ type connection struct {
 	scheme string
 	addr   string
 	conn   http.RoundTripper
-	attrs  atomic.Pointer[resolver.Attrs]
+	attrs  atomic.Pointer[attribute.Values]
 
 	doClose   func()
 	doPrewarm func(context.Context, string, string) error
@@ -714,8 +715,8 @@ func (c *connection) Address() resolver.Address {
 	return addr
 }
 
-func (c *connection) UpdateAttributes(attrs resolver.Attrs) {
-	c.attrs.Store(&attrs)
+func (c *connection) UpdateAttributes(values attribute.Values) {
+	c.attrs.Store(&values)
 }
 
 func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Response, error) {

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/balancertesting"
@@ -133,13 +134,13 @@ func TestConnManager(t *testing.T) {
 
 	// Still multiple addresses, but different counts, to make sure the conn manager
 	// correctly reconciles.
-	attrKey := resolver.NewAttrKey[int]()
-	attrs1a := resolver.NewAttrs(attrKey.Value(101))
-	attrs1b := resolver.NewAttrs(attrKey.Value(102))
-	attrs2a := resolver.NewAttrs(attrKey.Value(201))
-	attrs2b := resolver.NewAttrs(attrKey.Value(202))
-	attrs3a := resolver.NewAttrs(attrKey.Value(301))
-	attrs3b := resolver.NewAttrs(attrKey.Value(302))
+	attrKey := attribute.NewKey[int]()
+	attrs1a := attribute.NewValues(attrKey.Value(101))
+	attrs1b := attribute.NewValues(attrKey.Value(102))
+	attrs2a := attribute.NewValues(attrKey.Value(201))
+	attrs2b := attribute.NewValues(attrKey.Value(202))
+	attrs3a := attribute.NewValues(attrKey.Value(301))
+	attrs3b := attribute.NewValues(attrKey.Value(302))
 	addrs = []resolver.Address{
 		{HostPort: "1.2.3.1", Attributes: attrs1a},
 		{HostPort: "1.2.3.1", Attributes: attrs1b},
@@ -449,7 +450,7 @@ func awaitConns(t *testing.T, pool *balancertesting.FakeConnPool, addrs []resolv
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	want := connStatesFromAddrsIndexes(addrs, indexes)
-	var got map[connState]resolver.Attrs
+	var got map[connState]attribute.Values
 	for {
 		snapshot, err := pool.AwaitConnUpdate(ctx)
 		if err != nil {
@@ -468,7 +469,7 @@ func awaitCheckerUpdate(t *testing.T, checker *balancertesting.FakeHealthChecker
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	want := connStatesFromAddrsIndexes(addrs, indexes)
-	var got map[connState]resolver.Attrs
+	var got map[connState]attribute.Values
 	for {
 		snapshot, err := checker.AwaitCheckerUpdate(ctx)
 		if err != nil {
@@ -509,8 +510,8 @@ type connState struct {
 	index    int
 }
 
-func connStatesFromAddrsIndexes(addrs []resolver.Address, indexes []int) map[connState]resolver.Attrs {
-	want := map[connState]resolver.Attrs{}
+func connStatesFromAddrsIndexes(addrs []resolver.Address, indexes []int) map[connState]attribute.Values {
+	want := map[connState]attribute.Values{}
 	for i := range addrs {
 		want[connState{
 			hostPort: addrs[i].HostPort,
@@ -520,8 +521,8 @@ func connStatesFromAddrsIndexes(addrs []resolver.Address, indexes []int) map[con
 	return want
 }
 
-func connStatesFromSnapshot(snapshot conns.Set) map[connState]resolver.Attrs {
-	got := map[connState]resolver.Attrs{}
+func connStatesFromSnapshot(snapshot conns.Set) map[connState]attribute.Values {
+	got := map[connState]attribute.Values{}
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
@@ -531,8 +532,8 @@ func connStatesFromSnapshot(snapshot conns.Set) map[connState]resolver.Attrs {
 	return got
 }
 
-func connStatesFromHealthSnapshot(snapshot balancertesting.ConnHealth) map[connState]resolver.Attrs {
-	got := map[connState]resolver.Attrs{}
+func connStatesFromHealthSnapshot(snapshot balancertesting.ConnHealth) map[connState]attribute.Values {
+	got := map[connState]attribute.Values{}
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
