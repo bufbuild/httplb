@@ -77,7 +77,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Prewarm pre-warms the HTTP client, making sure that any targets configured
+// prewarm pre-warms the HTTP client, making sure that any targets configured
 // via WithBackendTarget have been warmed up. This ensures that relevant
 // addresses are resolved, any health checks performed, connections eagerly
 // established where possible, etc.
@@ -87,7 +87,9 @@ func (c *Client) Close() error {
 // delays vs. outright failure because the background machinery that gets
 // transports ready will keep re-trying instead of giving up and failing
 // fast.
-func (c *Client) Prewarm(ctx context.Context) error {
+func (c *Client) prewarm(ctx context.Context) error {
+	// TODO: Expose prewarm capability from this package and export this?
+	//       For now, this is just used from tests.
 	transport, ok := c.Transport.(*mainTransport)
 	if !ok {
 		return errors.New("client not created by httplb.NewClient")
@@ -155,7 +157,7 @@ func WithTransport(scheme string, transport Transport) ClientOption {
 // and host:port) with the given options. Targets configured this way will be
 // kept warm, meaning that associated transports will not be closed due to
 // inactivity, regardless of the idle transport timeout configuration. Further,
-// hosts configured this way can be "warmed up" via the Prewarm function, to
+// hosts configured this way can be "warmed up" via the prewarm function, to
 // make sure they are ready for application use.
 //
 // The scheme and host:port given must match those of associated requests. So

@@ -24,7 +24,7 @@
 // [name resolver] or a custom [load balancing policy] and for enabling
 // active [health checking].
 //
-// The returned client has a notion of being "warmed up", via the Prewarm
+// The returned client has a notion of being "warmed up", via the prewarm
 // method. This function eagerly resolves names, issues health checks
 // (if so configured), and awaits a minimum number of ready connections.
 // The [WithBackendTarget] option is used to tell the client which

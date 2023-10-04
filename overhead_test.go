@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package httplb_test
+package httplb
 
 import (
 	"context"
@@ -20,14 +20,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bufbuild/httplb"
 	"github.com/stretchr/testify/require"
 )
 
 type noopTransport struct{}
 
-func (n noopTransport) NewRoundTripper(string, string, httplb.TransportConfig) httplb.RoundTripperResult {
-	return httplb.RoundTripperResult{
+func (n noopTransport) NewRoundTripper(string, string, TransportConfig) RoundTripperResult {
+	return RoundTripperResult{
 		RoundTripper: n,
 	}
 }
@@ -40,12 +39,12 @@ func (noopTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func BenchmarkNoOpTransportHTTPLB(b *testing.B) {
-	client := httplb.NewClient(
-		httplb.WithTransport("http", noopTransport{}),
-		httplb.WithBackendTarget("http", "localhost:0"),
+	client := NewClient(
+		WithTransport("http", noopTransport{}),
+		WithBackendTarget("http", "localhost:0"),
 	)
 	warmCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	err := client.Prewarm(warmCtx)
+	err := client.prewarm(warmCtx)
 	cancel()
 	require.NoError(b, err)
 	b.SetParallelism(100)

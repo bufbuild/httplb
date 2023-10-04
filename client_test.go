@@ -658,7 +658,7 @@ func makeClient(t *testing.T, ctx context.Context, opts ...ClientOption) *Client
 		err := client.Close()
 		require.NoError(t, err)
 	})
-	err := client.Prewarm(ctx)
+	err := client.prewarm(ctx)
 	require.NoError(t, err)
 	return client
 }
