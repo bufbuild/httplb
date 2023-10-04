@@ -56,32 +56,6 @@ type Values struct {
 	data map[any]any
 }
 
-// Key is an attribute key. Applications should use NewKey to create
-// a new key for each distinct attribute. The type T is the type of
-// values this attribute can have.
-type Key[T any] struct {
-	// can't be empty or else pointers won't be distinct
-	_ bool
-}
-
-// Value constructs a new Attr value, which can be passed to [NewValues].
-func (k *Key[T]) Value(value T) Value {
-	return Value{key: k, value: value}
-}
-
-// NewKey returns a new key that can have values of type T. Each call
-// to NewKey results in a distinct attribute key, even if multiple are
-// created for the same type. (Keys are identified by their address.)
-func NewKey[T any]() *Key[T] {
-	return new(Key[T])
-}
-
-// Value is a single custom attribute, composed of a key and
-// corresponding value.
-type Value struct {
-	key, value any
-}
-
 // NewValues creates a new Values object with the provided values.
 //
 // Use this function in tandem with [Key.Value], like this:
@@ -97,6 +71,32 @@ func NewValues(values ...Value) Values {
 	return Values{
 		data: data,
 	}
+}
+
+// Key is an attribute key. Applications should use NewKey to create
+// a new key for each distinct attribute. The type T is the type of
+// values this attribute can have.
+type Key[T any] struct {
+	// can't be empty or else pointers won't be distinct
+	_ bool
+}
+
+// NewKey returns a new key that can have values of type T. Each call
+// to NewKey results in a distinct attribute key, even if multiple are
+// created for the same type. (Keys are identified by their address.)
+func NewKey[T any]() *Key[T] {
+	return new(Key[T])
+}
+
+// Value constructs a new Attr value, which can be passed to [NewValues].
+func (k *Key[T]) Value(value T) Value {
+	return Value{key: k, value: value}
+}
+
+// Value is a single custom attribute, composed of a key and
+// corresponding value.
+type Value struct {
+	key, value any
 }
 
 // GetValue retrieves a single value from the given Values. If the key is not

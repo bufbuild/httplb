@@ -284,10 +284,9 @@ type FakePicker struct {
 // NewFakePicker constructs a new FakePicker with the given connections.
 //
 // The return type is picker.Picker so this function can be directly used as
-// a "new picker" function with a balancer. But this function *always*
-// returns values whose type is *FakePicker.
-func NewFakePicker(prev picker.Picker, connections conn.Conns) picker.Picker {
-	_ = prev // we need prev so function matches "factory" function signature
+// a "new picker" function with a balancer. But this function always returns
+// values whose type is *FakePicker.
+func NewFakePicker(_ picker.Picker, connections conn.Conns) picker.Picker {
 	return &FakePicker{Conns: conns.ToSet(connections)}
 }
 

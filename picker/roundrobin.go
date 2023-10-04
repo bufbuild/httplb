@@ -26,8 +26,7 @@ import (
 // fashion, that is to say, in sequential order. In order to mitigate the risk
 // of a "thundering herd" scenario, the order of connections is randomized
 // each time the list of hosts changes.
-func NewRoundRobin(prev Picker, allConns conn.Conns) Picker {
-	_ = prev // we need prev so function matches "factory" function signature
+func NewRoundRobin(_ Picker, allConns conn.Conns) Picker {
 	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)

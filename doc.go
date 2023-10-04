@@ -24,12 +24,6 @@
 // [name resolver] or a custom [load balancing policy] and for enabling
 // active [health checking].
 //
-// The returned client has a notion of being "warmed up", via the prewarm
-// method. This function eagerly resolves names, issues health checks
-// (if so configured), and awaits a minimum number of ready connections.
-// The [WithAllowBackendTarget] option is used to tell the client which
-// connections need to be warmed up.
-//
 // The returned client also has a notion of "closing", via its Close
 // method. This step will wait for outstanding requests to complete and
 // then close all connections and also teardown any other goroutines that

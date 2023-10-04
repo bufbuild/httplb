@@ -25,8 +25,8 @@ import (
 )
 
 // NewLeastLoadedRoundRobin creates pickers that pick the connection
-// with the least in-flight requests. When a tie occurs, tied hosts will be
-// picked in an arbitrary but sequential order.
+// with the fewest in-flight requests. When a tie occurs, tied hosts will
+// be picked in an arbitrary but sequential order.
 func NewLeastLoadedRoundRobin(prev Picker, allConns conn.Conns) Picker {
 	if prev, ok := prev.(*leastLoadedRoundRobin); ok {
 		prev.mu.Lock()
@@ -44,7 +44,7 @@ func NewLeastLoadedRoundRobin(prev Picker, allConns conn.Conns) Picker {
 }
 
 // NewLeastLoadedRandom creates pickers that pick the connection with
-// the least in-flight requests. When a tie occurs, tied hosts will be
+// the fewest in-flight requests. When a tie occurs, tied hosts will be
 // picked at random.
 func NewLeastLoadedRandom(prev Picker, allConns conn.Conns) Picker {
 	if prev, ok := prev.(*leastLoadedRandom); ok {
