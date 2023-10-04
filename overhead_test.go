@@ -41,7 +41,7 @@ func (noopTransport) RoundTrip(*http.Request) (*http.Response, error) {
 func BenchmarkNoOpTransportHTTPLB(b *testing.B) {
 	client := NewClient(
 		WithTransport("http", noopTransport{}),
-		WithBackendTarget("http", "localhost:0"),
+		WithAllowBackendTarget("http", "localhost:0"),
 	)
 	warmCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	err := client.prewarm(warmCtx)

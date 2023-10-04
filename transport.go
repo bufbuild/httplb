@@ -107,7 +107,7 @@ type TransportConfig struct {
 	KeepWarm bool
 }
 
-func transportConfigFromOptions(opts *targetOptions) TransportConfig {
+func transportConfigFromOptions(opts *clientOptions) TransportConfig {
 	return TransportConfig{
 		DialFunc:                opts.dialFunc,
 		ProxyFunc:               opts.proxyFunc,
@@ -302,29 +302,28 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 		return nil, fmt.Errorf("unsupported URL scheme %q", dest.scheme)
 	}
 
-	targetOpts := m.clientOptions.optionsForTarget(dest)
-	if targetOpts == nil {
-		return nil, fmt.Errorf("client does not allow requests to unconfigured target %s", dest)
+	if m.clientOptions.allowedTarget != nil && *m.clientOptions.allowedTarget != dest {
+		return nil, fmt.Errorf("client does not allow requests to target %s, only to %s", dest, *m.clientOptions.allowedTarget)
 	}
 	var applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	if targetOpts.requestTimeout > 0 {
+	if m.clientOptions.requestTimeout > 0 {
 		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			return context.WithTimeout(ctx, targetOpts.requestTimeout)
+			return context.WithTimeout(ctx, m.clientOptions.requestTimeout)
 		}
-	} else if targetOpts.defaultTimeout > 0 {
+	} else if m.clientOptions.defaultTimeout > 0 {
 		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
 			_, ok := ctx.Deadline()
 			if !ok {
 				// no existing deadline, so set one
-				return context.WithTimeout(ctx, targetOpts.defaultTimeout)
+				return context.WithTimeout(ctx, m.clientOptions.defaultTimeout)
 			}
 			return ctx, func() {}
 		}
 	}
 
-	opts := transportConfigFromOptions(targetOpts)
+	opts := transportConfigFromOptions(m.clientOptions)
 	// explicitly configured targets are kept warm
-	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
+	opts.KeepWarm = m.clientOptions.allowedTarget != nil
 
 	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
 	if opts.TLSClientConfig == nil {
@@ -341,9 +340,9 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	m.runningPools.Add(1)
 	pool = newTransportPool(
 		m.rootCtx,
-		targetOpts.resolver,
-		targetOpts.newPicker,
-		targetOpts.healthChecker,
+		m.clientOptions.resolver,
+		m.clientOptions.newPicker,
+		m.clientOptions.healthChecker,
 		dest,
 		applyTimeout,
 		schemeConf,
@@ -421,19 +420,14 @@ func (m *mainTransport) removePool(dest target) {
 }
 
 func (m *mainTransport) prewarm(ctx context.Context) error {
-	if len(m.clientOptions.computedTargetOptions) == 0 {
+	if m.clientOptions.allowedTarget == nil {
 		return nil
 	}
-	grp, grpcCtx := errgroup.WithContext(ctx)
-	for dest := range m.clientOptions.computedTargetOptions {
-		pool, err := m.getOrCreatePool(dest)
-		if err == nil {
-			grp.Go(func() error {
-				return pool.prewarm(grpcCtx)
-			})
-		}
+	pool, _ := m.getOrCreatePool(*m.clientOptions.allowedTarget)
+	if pool != nil {
+		return pool.prewarm(ctx)
 	}
-	return grp.Wait()
+	return nil
 }
 
 type target struct {

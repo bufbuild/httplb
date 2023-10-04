@@ -27,7 +27,7 @@
 // The returned client has a notion of being "warmed up", via the prewarm
 // method. This function eagerly resolves names, issues health checks
 // (if so configured), and awaits a minimum number of ready connections.
-// The [WithBackendTarget] option is used to tell the client which
+// The [WithAllowBackendTarget] option is used to tell the client which
 // connections need to be warmed up.
 //
 // The returned client also has a notion of "closing", via its Close
