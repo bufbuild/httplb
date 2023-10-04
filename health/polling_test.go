@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/internal/clocktest"
 	"github.com/bufbuild/httplb/resolver"
@@ -139,7 +140,7 @@ func (f fakeConnChan) Address() resolver.Address {
 	return resolver.Address{HostPort: "::1"}
 }
 
-func (f fakeConnChan) UpdateAttributes(_ resolver.Attrs) {}
+func (f fakeConnChan) UpdateAttributes(_ attribute.Values) {}
 
 func (f fakeConnChan) Prewarm(_ context.Context) error { return nil }
 

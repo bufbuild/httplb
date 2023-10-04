@@ -22,24 +22,11 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-//nolint:gochecknoglobals
-var (
-	// RoundRobinFactory creates pickers that pick connections in a "round-robin"
-	// fashion, that is to say, in sequential order. In order to mitigate the risk
-	// of a "thundering herd" scenario, the order of connections is randomized
-	// each time the list of hosts changes.
-	RoundRobinFactory Factory = roundRobinFactory{}
-)
-
-type roundRobinFactory struct{}
-
-type roundRobin struct {
-	conns []conn.Conn
-	// +checkatomic
-	counter atomic.Int64
-}
-
-func (f roundRobinFactory) New(_ Picker, allConns conn.Conns) Picker {
+// NewRoundRobin creates pickers that pick connections in a "round-robin"
+// fashion, that is to say, in sequential order. In order to mitigate the risk
+// of a "thundering herd" scenario, the order of connections is randomized
+// each time the list of hosts changes.
+func NewRoundRobin(_ Picker, allConns conn.Conns) Picker {
 	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
@@ -52,6 +39,12 @@ func (f roundRobinFactory) New(_ Picker, allConns conn.Conns) Picker {
 	picker := &roundRobin{conns: conns}
 	picker.counter.Store(-1)
 	return picker
+}
+
+type roundRobin struct {
+	conns []conn.Conn
+	// +checkatomic
+	counter atomic.Int64
 }
 
 func (r *roundRobin) Pick(_ *http.Request) (conn conn.Conn, whenDone func(), err error) {

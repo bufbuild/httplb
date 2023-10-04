@@ -30,14 +30,14 @@ func TestPowerOfTwoPicker(t *testing.T) {
 	// need to ensure that order repeats as expected
 
 	dummyConn := conn.Conn(nil)
-	pick := picker.PowerOfTwoFactory.New(nil, dummyConns{[]conn.Conn{dummyConn}})
+	pick := picker.NewPowerOfTwo(nil, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err := pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 
 	// TODO: test (whitebox?) that state is retained between pickers
 
-	pick = picker.PowerOfTwoFactory.New(pick, dummyConns{[]conn.Conn{dummyConn}})
+	pick = picker.NewPowerOfTwo(pick, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err = pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)

@@ -20,6 +20,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/internal"
 )
 
@@ -98,7 +99,7 @@ type Address struct {
 	HostPort string
 
 	// Attributes is a collection of arbitrary key/value pairs.
-	Attributes Attrs
+	Attributes attribute.Values
 }
 
 // NewDNSResolver creates a new resolver that resolves DNS names.

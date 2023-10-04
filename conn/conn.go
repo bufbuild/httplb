@@ -23,6 +23,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/resolver"
 )
 
@@ -39,7 +40,7 @@ type Conn interface {
 	// Address is the address to which this value is connected.
 	Address() resolver.Address
 	// UpdateAttributes updates the connection's address to have the given attributes.
-	UpdateAttributes(attributes resolver.Attrs)
+	UpdateAttributes(attributes attribute.Values)
 	// Prewarm attempts to pre-warm this connection. Not all transports support
 	// this operation. For those that do not, calling this function is a no-op.
 	// It returns an error if the given context is cancelled or times out before

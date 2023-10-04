@@ -44,7 +44,7 @@ const (
 
 func newBalancer(
 	ctx context.Context,
-	picker picker.Factory,
+	picker func(prev picker.Picker, allConns conn.Conns) picker.Picker,
 	checker health.Checker,
 	pool connPool,
 ) *balancer {
@@ -53,7 +53,7 @@ func newBalancer(
 		ctx:             ctx,
 		cancel:          cancel,
 		pool:            pool,
-		picker:          picker,
+		newPicker:       picker,
 		healthChecker:   checker,
 		resolverUpdates: make(chan struct{}, 1),
 		closed:          make(chan struct{}),
@@ -77,8 +77,8 @@ type balancer struct {
 	ctx           context.Context // +checklocksignore: mu is not required, but happens to always be held.
 	cancel        context.CancelFunc
 	pool          connPool
-	picker        picker.Factory // +checklocksignore: mu is not required, but happens to always be held.
-	healthChecker health.Checker // +checklocksignore: mu is not required, but happens to always be held.
+	newPicker     func(prev picker.Picker, allConns conn.Conns) picker.Picker // +checklocksignore: mu is not required, but happens to always be held.
+	healthChecker health.Checker                                              // +checklocksignore: mu is not required, but happens to always be held.
 	connManager   connManager
 
 	// NB: only set from tests
@@ -327,7 +327,7 @@ func (b *balancer) newPickerLocked() {
 	usableSet := conns.SetFromSlice(usable)
 	if !usableSet.Equals(b.latestUsableConns) {
 		// only recreate picker if the connections actually changed
-		b.latestPicker = b.picker.New(b.latestPicker, conns.FromSlice(usable))
+		b.latestPicker = b.newPicker(b.latestPicker, conns.FromSlice(usable))
 		b.latestUsableConns = usableSet
 	}
 	b.pool.UpdatePicker(b.latestPicker, b.isWarmLocked(usable))

@@ -47,17 +47,19 @@ func TestNewClient_Basic(t *testing.T) {
 	addr := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
-	client := makeClient(t, ctx,
-		WithBackendTarget("http", addr),
-		WithBackendTarget("h2c", addr),
+	clientHTTP := makeClient(t, ctx,
+		WithAllowBackendTarget("http", addr),
+	)
+	clientH2C := makeClient(t, ctx,
+		WithAllowBackendTarget("h2c", addr),
 	)
 
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr), expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientHTTP, fmt.Sprintf("http://%s/foo", addr), expectSuccess("got it"))
 
 	t.Logf("Number of goroutines after HTTP client created and used: %d", runtime.NumGoroutine())
 
 	// do it again, using h2c
-	sendGetRequest(t, ctx, client, fmt.Sprintf("h2c://%s/foo", addr), expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientH2C, fmt.Sprintf("h2c://%s/foo", addr), expectSuccess("got it"))
 }
 
 func TestNewClient_MultipleTargets(t *testing.T) {
@@ -73,11 +75,7 @@ func TestNewClient_MultipleTargets(t *testing.T) {
 	addr3 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(([]byte)("twinkle twinkle little bat")) //nolint:dupword //intentional!
 	}))
-	client := makeClient(t, ctx,
-		WithBackendTarget("http", addr1),
-		WithBackendTarget("http", addr2),
-		WithBackendTarget("http", addr3),
-	)
+	client := makeClient(t, ctx)
 
 	var sentGroup sync.WaitGroup
 	var finished atomic.Int32
@@ -142,7 +140,7 @@ func TestNewClient_LoadBalancing(t *testing.T) {
 	}))
 	client := makeClient(t, ctx,
 		WithResolver(fakeResolver{map[string][]string{"foo.com": {addr1, addr2, addr3}}}),
-		WithBackendTarget("http", "foo.com"),
+		WithAllowBackendTarget("http", "foo.com"),
 	)
 
 	var wg sync.WaitGroup
@@ -161,7 +159,7 @@ func TestNewClient_LoadBalancing(t *testing.T) {
 	require.Equal(t, int32(10), counters[2].Load())
 }
 
-func TestNewClient_RoundTripperOptions(t *testing.T) {
+func TestNewClient_TransportConfig(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
@@ -187,33 +185,37 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	addr3 := startServer(t, ctx, handler)
 	var dialCount atomic.Int32
 	tlsConf := &tls.Config{ServerName: "example.com"} //nolint:gosec
-	client := makeClient(t, ctx,
-		WithRoundTripperFactory("http", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
-			latestOptions.Store(target, options)
-			result := simpleFactory{}.New(scheme, target, options)
-			latestResults.Store(target, result)
-			return result
-		})),
-		WithBackendTarget("http", addr1), // all defaults
-		WithBackendTarget("http", addr2,
-			WithNoProxy(),
-			WithMaxResponseHeaderBytes(10101),
-			WithRedirects(FollowRedirects(3)),
-			WithIdleConnectionTimeout(time.Second),
-			WithTLSConfig(tlsConf, 5*time.Second),
-			WithDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
-				dialCount.Add(1)
-				return defaultDialer.DialContext(ctx, network, addr)
-			}),
-		),
+	transportOption := WithTransport("http", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
+		latestOptions.Store(target, options)
+		result := simpleTransport{}.NewRoundTripper(scheme, target, options)
+		latestResults.Store(target, result)
+		return result
+	}))
+	client1 := makeClient(t, ctx,
+		transportOption,
+		WithAllowBackendTarget("http", addr1), // all defaults
 	)
+	client2 := makeClient(t, ctx,
+		transportOption,
+		WithAllowBackendTarget("http", addr2),
+		WithNoProxy(),
+		WithMaxResponseHeaderBytes(10101),
+		WithRedirects(FollowRedirects(3)),
+		WithIdleConnectionTimeout(time.Second),
+		WithTLSConfig(tlsConf, 5*time.Second),
+		WithDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialCount.Add(1)
+			return defaultDialer.DialContext(ctx, network, addr)
+		}),
+	)
+	client3 := makeClient(t, ctx, transportOption) // all defaults, no explicitly configured backend
 
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
+	sendGetRequest(t, ctx, client1, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
 
 	// make sure round tripper options were all defaults
 	val, ok := latestOptions.Load(addr1)
 	require.True(t, ok)
-	rtOpts := val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts := val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -234,15 +236,15 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.Zero(t, transport.IdleConnTimeout)
 
 	// no redirects
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/redirect", addr1), expectRedirect("/foo"))
+	sendGetRequest(t, ctx, client1, fmt.Sprintf("http://%s/redirect", addr1), expectRedirect("/foo"))
 
 	// now try a backend that is not configured (so all defaults)
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr3), expectSuccess("got it"))
+	sendGetRequest(t, ctx, client3, fmt.Sprintf("http://%s/foo", addr3), expectSuccess("got it"))
 
 	// same defaults as above, except KeepWarm is false
 	val, ok = latestOptions.Load(addr3)
 	require.True(t, ok)
-	rtOpts = val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts = val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -254,12 +256,12 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.False(t, rtOpts.KeepWarm)
 
 	// now try backend with the options
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr2), expectSuccess("got it"))
+	sendGetRequest(t, ctx, client2, fmt.Sprintf("http://%s/foo", addr2), expectSuccess("got it"))
 
 	// check that the options match what was configured above
 	val, ok = latestOptions.Load(addr2)
 	require.True(t, ok)
-	rtOpts = val.(RoundTripperOptions) //nolint:errcheck
+	rtOpts = val.(TransportConfig) //nolint:errcheck
 	require.NotNil(t, rtOpts)
 	require.NotEqual(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(rtOpts.ProxyFunc).Pointer())
 	require.Nil(t, rtOpts.ProxyConnectHeadersFunc)
@@ -282,17 +284,17 @@ func TestNewClient_RoundTripperOptions(t *testing.T) {
 	require.Equal(t, time.Second, transport.IdleConnTimeout)
 
 	// This one allows redirects
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/redirect3", addr2), expectSuccess("got it"))
+	sendGetRequest(t, ctx, client2, fmt.Sprintf("http://%s/redirect3", addr2), expectSuccess("got it"))
 	// But not too many
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/redirect4", addr2), expectError("too many redirects (> 3)"))
+	sendGetRequest(t, ctx, client2, fmt.Sprintf("http://%s/redirect4", addr2), expectError("too many redirects (> 3)"))
 }
 
-func TestNewClient_CustomRoundTripper(t *testing.T) {
+func TestNewClient_CustomTransport(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
 	client := makeClient(t, ctx,
-		WithRoundTripperFactory("foo", roundTripperFactoryFunc(func(scheme, target string, options RoundTripperOptions) RoundTripperResult {
+		WithTransport("foo", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
 			return RoundTripperResult{
 				RoundTripper: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 					recorder := httptest.NewRecorder()
@@ -318,7 +320,6 @@ func TestNewClient_CloseIdleTransports(t *testing.T) {
 	}))
 	client := makeClient(t, ctx,
 		WithIdleTransportTimeout(200*time.Millisecond),
-		WithBackendTarget("http", addr1),
 	)
 
 	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
@@ -334,15 +335,31 @@ func TestNewClient_CloseIdleTransports(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		transport.mu.Lock()
+		_, addr1Present := transport.pools[target{scheme: "http", hostPort: addr1}]
 		_, addr2Present := transport.pools[target{scheme: "http", hostPort: addr2}]
 		transport.mu.Unlock()
-		if !addr2Present {
-			// No longer there? Success: idle transport was removed!
+		if !addr1Present && !addr2Present {
+			// No longer there? Success: idle transports were removed!
 			break
 		}
 		require.LessOrEqual(t, time.Since(deadline), time.Duration(0))
 	}
-	// addr1 should still be present since it's a known backend that is kept warm
+
+	// If addr1 explicitly configured as target, it is kept warm and not removed.
+	client = makeClient(t, ctx,
+		WithIdleTransportTimeout(200*time.Millisecond),
+		WithAllowBackendTarget("http", addr1),
+	)
+	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
+	transport = client.Transport.(*mainTransport) //nolint:errcheck
+	transport.mu.Lock()
+	_, addr1Present = transport.pools[target{scheme: "http", hostPort: addr1}]
+	transport.mu.Unlock()
+	require.True(t, addr1Present)
+
+	// Wait clearly more than idle timeout and then make sure addr1 is still
+	// around since it's kept warm.
+	time.Sleep(time.Second)
 	transport.mu.Lock()
 	_, addr1Present = transport.pools[target{scheme: "http", hostPort: addr1}]
 	transport.mu.Unlock()
@@ -376,31 +393,40 @@ func TestNewClient_Timeouts(t *testing.T) {
 		}
 		_, _ = w.Write(([]byte)("got it"))
 	}))
-	client := makeClient(t, ctx,
-		WithResolver(fakeResolver{map[string][]string{
-			"foo.com": {addr},
-			"bar.com": {addr},
-			"baz.com": {addr},
-		}}),
-		WithBackendTarget("http", "foo.com", WithRequestTimeout(200*time.Millisecond)),
-		WithBackendTarget("http", "bar.com", WithDefaultTimeout(200*time.Millisecond)),
-		WithBackendTarget("http", "baz.com"), // no timeout
+	res := fakeResolver{map[string][]string{
+		"foo.com": {addr},
+		"bar.com": {addr},
+		"baz.com": {addr},
+	}}
+	clientFoo := makeClient(t, ctx,
+		WithResolver(res),
+		WithAllowBackendTarget("http", "foo.com"),
+		WithRequestTimeout(200*time.Millisecond),
+	)
+	clientBar := makeClient(t, ctx,
+		WithResolver(res),
+		WithAllowBackendTarget("http", "bar.com"),
+		WithDefaultTimeout(200*time.Millisecond),
+	)
+	clientBaz := makeClient(t, ctx,
+		WithResolver(res),
+		WithAllowBackendTarget("http", "baz.com"), // no timeout
 	)
 
-	sendGetRequest(t, ctx, client, "http://foo.com/foo", expectSuccess("got it"))
-	sendGetRequest(t, ctx, client, "http://bar.com/foo", expectSuccess("got it"))
-	sendGetRequest(t, ctx, client, "http://baz.com/foo", expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientFoo, "http://foo.com/foo", expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientBar, "http://bar.com/foo", expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientBaz, "http://baz.com/foo", expectSuccess("got it"))
 	// With payload that incurs 300ms delay, only third one succeeds due to 200ms timeout for other two.
-	sendPostRequest(t, ctx, client, "http://foo.com/foo", "300", expectError("deadline exceeded"))
-	sendPostRequest(t, ctx, client, "http://bar.com/foo", "300", expectError("deadline exceeded"))
-	sendPostRequest(t, ctx, client, "http://baz.com/foo", "300", expectSuccess("got it"))
+	sendPostRequest(t, ctx, clientFoo, "http://foo.com/foo", "300", expectError("deadline exceeded"))
+	sendPostRequest(t, ctx, clientBar, "http://bar.com/foo", "300", expectError("deadline exceeded"))
+	sendPostRequest(t, ctx, clientBaz, "http://baz.com/foo", "300", expectSuccess("got it"))
 	// foo.com uses a hard request deadline, which applies even if request already has a deadline
 	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, time.Second)
-	sendPostRequest(t, timeoutCtx, client, "http://foo.com/foo", "300", expectError("deadline exceeded"))
+	sendPostRequest(t, timeoutCtx, clientFoo, "http://foo.com/foo", "300", expectError("deadline exceeded"))
 	timeoutCancel()
 	// but bar.com uses a *default* deadline, only applied to requests when a deadline is not already present
 	timeoutCtx, timeoutCancel = context.WithTimeout(ctx, time.Second)
-	sendPostRequest(t, timeoutCtx, client, "http://bar.com/foo", "300", expectSuccess("got it"))
+	sendPostRequest(t, timeoutCtx, clientBar, "http://bar.com/foo", "300", expectSuccess("got it"))
 	timeoutCancel()
 }
 
@@ -413,17 +439,23 @@ func TestNewClient_Proxy(t *testing.T) {
 	}))
 	proxyAddr, proxyCounter := startProxy(t, ctx)
 
-	client := makeClient(t, ctx,
-		WithResolver(fakeResolver{map[string][]string{
-			"foo.com": {addr},
-			"bar.com": {addr},
-		}}),
-		WithBackendTarget("http", "foo.com", WithNoProxy()),
+	res := fakeResolver{map[string][]string{
+		"foo.com": {addr},
+		"bar.com": {addr},
+	}}
+	clientFoo := makeClient(t, ctx,
+		WithResolver(res),
+		WithAllowBackendTarget("http", "foo.com"),
+		WithNoProxy(),
+	)
+	clientBar := makeClient(t, ctx,
+		WithResolver(res),
+		WithAllowBackendTarget("http", "bar.com"),
 		// We can't use default proxy setting, which uses environment vars, because
 		// that excludes loopback addresses :(
-		// But TestNewClient_RoundTripperOptions already tests that the function is
+		// But TestNewClient_TransportConfig already tests that the function is
 		// set by default. So we'll test with a custom proxy function.
-		WithBackendTarget("http", "bar.com", WithProxy(
+		WithProxy(
 			func(req *http.Request) (*url.URL, error) {
 				// clear out Host header so that proxy gets the
 				// actual target address, not "bar.com"
@@ -432,13 +464,13 @@ func TestNewClient_Proxy(t *testing.T) {
 				return &url.URL{Scheme: "http", Host: proxyAddr}, nil
 			},
 			nil,
-		)),
+		),
 	)
 
-	sendGetRequest(t, ctx, client, "http://foo.com/foo", expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientFoo, "http://foo.com/foo", expectSuccess("got it"))
 	require.Zero(t, proxyCounter.Load())
 	// the other domain, however, will go through our proxy
-	sendGetRequest(t, ctx, client, "http://bar.com/foo", expectSuccess("got it"))
+	sendGetRequest(t, ctx, clientBar, "http://bar.com/foo", expectSuccess("got it"))
 	require.Equal(t, int32(1), proxyCounter.Load())
 }
 
@@ -480,7 +512,7 @@ func TestNewClient_TLS(t *testing.T) {
 	sendGetRequest(t, ctx, client, url.String(), expectSuccess("success"))
 }
 
-func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {
+func TestNewClient_DisallowUnconfiguredTarget(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
@@ -490,14 +522,11 @@ func TestNewClient_DisallowUnconfiguredTargets(t *testing.T) {
 	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(([]byte)("don't got it"))
 	}))
-	client := makeClient(t, ctx,
-		WithBackendTarget("http", addr1),
-		WithDisallowUnconfiguredTargets(),
-	)
+	client := makeClient(t, ctx, WithAllowBackendTarget("http", addr1))
 
 	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr1), expectSuccess("got it"))
 	// addr2 is not a configured target
-	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr2), expectError("client does not allow requests to unconfigured target"))
+	sendGetRequest(t, ctx, client, fmt.Sprintf("http://%s/foo", addr2), expectError("client does not allow requests to target"))
 }
 
 //nolint:revive // linter wants ctx first, but t first is okay
@@ -658,7 +687,7 @@ func makeClient(t *testing.T, ctx context.Context, opts ...ClientOption) *Client
 		err := client.Close()
 		require.NoError(t, err)
 	})
-	err := client.Prewarm(ctx)
+	err := client.prewarm(ctx)
 	require.NoError(t, err)
 	return client
 }
@@ -708,9 +737,9 @@ type fakeResolverTask struct{}
 
 func (n fakeResolverTask) Close() error { return nil }
 
-type roundTripperFactoryFunc func(scheme, target string, options RoundTripperOptions) RoundTripperResult
+type transportFunc func(scheme, target string, options TransportConfig) RoundTripperResult
 
-func (f roundTripperFactoryFunc) New(scheme, target string, options RoundTripperOptions) RoundTripperResult {
+func (f transportFunc) NewRoundTripper(scheme, target string, options TransportConfig) RoundTripperResult {
 	return f(scheme, target, options)
 }
 

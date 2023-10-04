@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
@@ -56,11 +57,10 @@ func NewClient(options ...ClientOption) *Client {
 		opt.applyToClient(&opts)
 	}
 	opts.applyDefaults()
-	opts.computeTargetOptions()
 	return &Client{
 		Client: &http.Client{
 			Transport:     newTransport(&opts),
-			CheckRedirect: opts.redirect,
+			CheckRedirect: opts.redirectFunc,
 		},
 	}
 }
@@ -76,8 +76,8 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Prewarm pre-warms the HTTP client, making sure that any targets configured
-// via WithBackendTarget have been warmed up. This ensures that relevant
+// prewarm pre-warms the HTTP client, making sure that any targets configured
+// via WithAllowBackendTarget have been warmed up. This ensures that relevant
 // addresses are resolved, any health checks performed, connections eagerly
 // established where possible, etc.
 //
@@ -86,7 +86,9 @@ func (c *Client) Close() error {
 // delays vs. outright failure because the background machinery that gets
 // transports ready will keep re-trying instead of giving up and failing
 // fast.
-func (c *Client) Prewarm(ctx context.Context) error {
+func (c *Client) prewarm(ctx context.Context) error {
+	// TODO: Expose prewarm capability from this package and export this?
+	//       For now, this is just used from tests.
 	transport, ok := c.Transport.(*mainTransport)
 	if !ok {
 		return errors.New("client not created by httplb.NewClient")
@@ -136,59 +138,38 @@ func WithIdleTransportTimeout(duration time.Duration) ClientOption {
 	})
 }
 
-// WithRoundTripperFactory returns an option that uses a custom factory
-// for [http.RoundTripper] instances for the given URL scheme. This allows
-// one to override the default factories for "http", "https", and "h2c"
-// schemes and also allows one to support custom URL schemes that map to
-// custom transports created by the given factory.
-func WithRoundTripperFactory(scheme string, factory RoundTripperFactory) ClientOption {
+// WithTransport returns an option that uses a custom transport to create
+// [http.RoundTripper] instances for the given URL scheme. This allows
+// one to override the default implementations for "http", "https", and
+// "h2c" schemes and also allows one to support custom URL schemes that
+// map to these custom transports.
+func WithTransport(scheme string, transport Transport) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		if opts.schemes == nil {
-			opts.schemes = map[string]RoundTripperFactory{}
+			opts.schemes = map[string]Transport{}
 		}
-		opts.schemes[scheme] = factory
+		opts.schemes[scheme] = transport
 	})
 }
 
-// WithBackendTarget configures the given target (identified by URL scheme
-// and host:port) with the given options. Targets configured this way will be
-// kept warm, meaning that associated transports will not be closed due to
-// inactivity, regardless of the idle transport timeout configuration. Further,
-// hosts configured this way can be "warmed up" via the Prewarm function, to
-// make sure they are ready for application use.
+// WithAllowBackendTarget configures the client to only allow requests to the
+// given target (identified by URL scheme and host:port).
+//
+// When configured this way, connections to the backend target will be kept warm,
+// meaning that associated transports will not be closed due to inactivity,
+// regardless of the idle transport timeout configuration.
 //
 // The scheme and host:port given must match those of associated requests. So
 // if requests omit the port from the URL (for example), then the hostPort
 // given here should also omit the port.
-func WithBackendTarget(scheme, hostPort string, targetOpts ...TargetOption) ClientOption {
+func WithAllowBackendTarget(scheme, hostPort string) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		dest := target{scheme: scheme, hostPort: hostPort}
 		if dest.scheme == "" {
 			dest.scheme = "http"
 		}
-		if opts.targetOptions == nil {
-			opts.targetOptions = map[target][]TargetOption{}
-		}
-		opts.targetOptions[dest] = append(opts.targetOptions[dest], targetOpts...)
+		opts.allowedTarget = &dest
 	})
-}
-
-// WithDisallowUnconfiguredTargets configures the client to disallow HTTP
-// requests to targets that were not configured via WithBackendTarget options.
-func WithDisallowUnconfiguredTargets() ClientOption {
-	return clientOptionFunc(func(opts *clientOptions) {
-		opts.disallowOthers = true
-	})
-}
-
-// TargetOption is an option used to customize the behavior of an HTTP client
-// that can be applied to a single target or backend.
-//
-// A TargetOption can be used as a ClientOption, in which case it applies as
-// a default for all targets.
-type TargetOption interface {
-	applyToClient(*clientOptions)
-	applyToTarget(*targetOptions)
 }
 
 // WithResolver configures the HTTP client to use the given resolver, which
@@ -197,18 +178,18 @@ type TargetOption interface {
 //
 // If not provided, the default resolver will resolve A and AAAA records
 // using net.DefaultResolver.
-func WithResolver(res resolver.Resolver) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithResolver(res resolver.Resolver) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.resolver = res
 	})
 }
 
-// WithPicker configures the HTTP client to use the given picker.Factory.
-// The factory is used to create a new picker every time the set of usable
-// connections changes for a target.
-func WithPicker(picker picker.Factory) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
-		opts.picker = picker
+// WithPicker configures the HTTP client to use the given function to create
+// picker instances. The factory is invoked to create a new picker every time
+// the set of usable connections changes for a target.
+func WithPicker(newPicker func(prev picker.Picker, allConns conn.Conns) picker.Picker) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.newPicker = newPicker
 	})
 }
 
@@ -218,8 +199,8 @@ func WithPicker(picker picker.Factory) TargetOption {
 //
 // If no such option is given, then no health checking is done and all
 // connections will be considered healthy.
-func WithHealthChecks(checker health.Checker) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithHealthChecks(checker health.Checker) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.healthChecker = checker
 	})
 }
@@ -248,15 +229,15 @@ func WithHealthChecks(checker health.Checker) TargetOption {
 func WithProxy(
 	proxyFunc func(*http.Request) (*url.URL, error),
 	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error),
-) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.proxyFunc = proxyFunc
 		opts.proxyConnectHeadersFunc = proxyConnectHeadersFunc
 	})
 }
 
 // WithNoProxy returns an option that disables use of HTTP proxies.
-func WithNoProxy() TargetOption {
+func WithNoProxy() ClientOption {
 	return WithProxy(
 		// never use a proxy
 		func(*http.Request) (*url.URL, error) { return nil, nil },
@@ -268,8 +249,8 @@ func WithNoProxy() TargetOption {
 // already has a deadline, then no timeout is applied. Otherwise, the
 // given timeout is used and applies to the entire duration of the request,
 // from sending the first request byte to receiving the last response byte.
-func WithDefaultTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithDefaultTimeout(duration time.Duration) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.defaultTimeout = duration
 		opts.requestTimeout = 0
 	})
@@ -279,8 +260,8 @@ func WithDefaultTimeout(duration time.Duration) TargetOption {
 // is the entire duration of the request, including sending the request,
 // writing the request body, waiting for a response, and consuming the
 // response body.
-func WithRequestTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithRequestTimeout(duration time.Duration) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.defaultTimeout = 0
 		opts.requestTimeout = duration
 	})
@@ -290,8 +271,8 @@ func WithRequestTimeout(duration time.Duration) TargetOption {
 // establish network connections. If no WithDialer option is provided,
 // a default [net.Dialer] is used that uses a 30-second dial timeout and
 // configures the connection to use TCP keep-alive every 30 seconds.
-func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.dialFunc = dialFunc
 	})
 }
@@ -301,8 +282,8 @@ func WithDialer(dialFunc func(ctx context.Context, network, addr string) (net.Co
 // given timeout is applied to the TLS handshake step. If the given timeout
 // is zero or no WithTLSConfig option is used, a default timeout of 10
 // seconds will be used.
-func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.tlsClientConfig = config
 		opts.tlsHandshakeTimeout = handshakeTimeout
 	})
@@ -311,8 +292,8 @@ func WithTLSConfig(config *tls.Config, handshakeTimeout time.Duration) TargetOpt
 // WithMaxResponseHeaderBytes configures the maximum size of response headers
 // to consume. If zero or if no WithMaxResponseHeaderBytes option is used, the
 // HTTP client will default to a 1 MB limit (2^20 bytes).
-func WithMaxResponseHeaderBytes(limit int) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithMaxResponseHeaderBytes(limit int) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.maxResponseHeaderBytes = int64(limit)
 	})
 }
@@ -325,16 +306,16 @@ func WithMaxResponseHeaderBytes(limit int) TargetOption {
 // than that time limit, to prevent the client from trying to use a
 // connection could be concurrently closed by a server for being idle
 // for too long.
-func WithIdleConnectionTimeout(duration time.Duration) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithIdleConnectionTimeout(duration time.Duration) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.idleConnTimeout = duration
 	})
 }
 
 // WithRedirects configures how the HTTP client handles redirect responses.
 // If no such option is provided, the client will not follow any redirects.
-func WithRedirects(redirectFunc RedirectFunc) TargetOption {
-	return targetOptionFunc(func(opts *targetOptions) {
+func WithRedirects(redirectFunc RedirectFunc) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
 		opts.redirectFunc = redirectFunc
 	})
 }
@@ -368,19 +349,23 @@ func (f clientOptionFunc) applyToClient(opts *clientOptions) {
 }
 
 type clientOptions struct {
-	rootCtx              context.Context //nolint:containedctx
-	idleTransportTimeout time.Duration
-	// if true, only targets configured below are allowed; requests to others will fail
-	disallowOthers bool
-	schemes        map[string]RoundTripperFactory
-
-	// target options are accumulated in these
-	defaultTargetOptions []TargetOption
-	targetOptions        map[target][]TargetOption
-
-	// the above options are then applied to these computed results
-	computedDefaultTargetOptions targetOptions
-	computedTargetOptions        map[target]*targetOptions
+	rootCtx                 context.Context //nolint:containedctx
+	idleTransportTimeout    time.Duration
+	schemes                 map[string]Transport
+	redirectFunc            func(req *http.Request, via []*http.Request) error
+	allowedTarget           *target
+	resolver                resolver.Resolver
+	newPicker               func(prev picker.Picker, allConns conn.Conns) picker.Picker
+	healthChecker           health.Checker
+	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
+	proxyFunc               func(*http.Request) (*url.URL, error)
+	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	maxResponseHeaderBytes  int64
+	idleConnTimeout         time.Duration
+	tlsClientConfig         *tls.Config
+	tlsHandshakeTimeout     time.Duration
+	defaultTimeout          time.Duration
+	requestTimeout          time.Duration
 }
 
 func (opts *clientOptions) applyDefaults() {
@@ -391,102 +376,28 @@ func (opts *clientOptions) applyDefaults() {
 		opts.idleTransportTimeout = 15 * time.Minute
 	}
 	if opts.schemes == nil {
-		opts.schemes = map[string]RoundTripperFactory{}
+		opts.schemes = map[string]Transport{}
+	}
+	if opts.redirectFunc == nil {
+		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
 	}
 	// put default factories for http, https, and h2c if necessary
 	if _, ok := opts.schemes["http"]; !ok {
-		opts.schemes["http"] = simpleFactory{}
+		opts.schemes["http"] = simpleTransport{}
 	}
 	if _, ok := opts.schemes["https"]; !ok {
-		opts.schemes["https"] = simpleFactory{}
+		opts.schemes["https"] = simpleTransport{}
 	}
 	if _, ok := opts.schemes["h2c"]; !ok {
-		opts.schemes["h2c"] = h2cFactory{}
+		opts.schemes["h2c"] = h2cTransport{}
 	}
-}
-
-func (opts *clientOptions) computeTargetOptions() {
-	// compute the defaults
-	for _, opt := range opts.defaultTargetOptions {
-		opt.applyToTarget(&opts.computedDefaultTargetOptions)
-	}
-	opts.computedDefaultTargetOptions.applyDefaults()
-
-	// and compute for each configured target
-	opts.computedTargetOptions = make(map[target]*targetOptions, len(opts.targetOptions))
-	for target, targetOptionSlice := range opts.targetOptions {
-		var targetOpts targetOptions
-		// apply defaults first
-		for _, opt := range opts.defaultTargetOptions {
-			opt.applyToTarget(&targetOpts)
-		}
-		// then others, to override defaults
-		for _, opt := range targetOptionSlice {
-			opt.applyToTarget(&targetOpts)
-		}
-		// finally, fill in defaults for unset values
-		targetOpts.applyDefaults()
-
-		opts.computedTargetOptions[target] = &targetOpts
-	}
-}
-
-func (opts *clientOptions) redirect(req *http.Request, via []*http.Request) error {
-	// use original request target to determine redirect rules
-	dest := targetFromURL(via[0].URL)
-	targetOpts := opts.optionsForTarget(dest)
-	if targetOpts == nil {
-		return nil
-	}
-	return targetOpts.redirectFunc(req, via)
-}
-
-// optionsForTarget returns the options to use for requests to the given
-// target. If the given target was not configured, this will return the
-// default options, or it will return nil if WithDisallowUnconfiguredTargets
-// was used.
-func (opts *clientOptions) optionsForTarget(dest target) *targetOptions {
-	if targetOpts := opts.computedTargetOptions[dest]; targetOpts != nil {
-		return targetOpts
-	}
-	if opts.disallowOthers {
-		return nil
-	}
-	return &opts.computedDefaultTargetOptions
-}
-
-type targetOptionFunc func(*targetOptions)
-
-func (f targetOptionFunc) applyToClient(opts *clientOptions) {
-	opts.defaultTargetOptions = append(opts.defaultTargetOptions, f)
-}
-
-func (f targetOptionFunc) applyToTarget(opts *targetOptions) {
-	f(opts)
-}
-
-type targetOptions struct {
-	resolver                resolver.Resolver
-	picker                  picker.Factory
-	healthChecker           health.Checker
-	dialFunc                func(ctx context.Context, network, addr string) (net.Conn, error)
-	proxyFunc               func(*http.Request) (*url.URL, error)
-	proxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
-	redirectFunc            func(req *http.Request, via []*http.Request) error
-	maxResponseHeaderBytes  int64
-	idleConnTimeout         time.Duration
-	tlsClientConfig         *tls.Config
-	tlsHandshakeTimeout     time.Duration
-	defaultTimeout          time.Duration
-	requestTimeout          time.Duration
-}
-
-func (opts *targetOptions) applyDefaults() {
 	if opts.resolver == nil {
 		opts.resolver = defaultResolver
 	}
-	if opts.picker == nil {
-		opts.picker = picker.RoundRobinFactory
+	if opts.newPicker == nil {
+		opts.newPicker = picker.NewRoundRobin
 	}
 	if opts.healthChecker == nil {
 		opts.healthChecker = health.NoOpChecker
@@ -496,11 +407,6 @@ func (opts *targetOptions) applyDefaults() {
 	}
 	if opts.proxyFunc == nil {
 		opts.proxyFunc = http.ProxyFromEnvironment
-	}
-	if opts.redirectFunc == nil {
-		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
 	}
 	if opts.maxResponseHeaderBytes == 0 {
 		opts.maxResponseHeaderBytes = 1 << 20

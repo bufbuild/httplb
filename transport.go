@@ -28,11 +28,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
+	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -46,6 +48,112 @@ var requestPool = sync.Pool{
 	New: func() any {
 		return &http.Request{URL: &url.URL{}}
 	},
+}
+
+// Transport is used to create round trippers that handle requests to a single
+// resolved address.
+type Transport interface {
+	// NewRoundTripper creates a new [http.RoundTripper] for requests using the
+	// given scheme to the given host, per the given config.
+	NewRoundTripper(scheme, target string, config TransportConfig) RoundTripperResult
+}
+
+// RoundTripperResult is the result type created by a Transport. The contained
+// RoundTripper represents a "leaf" transport used for sending requests.
+type RoundTripperResult struct {
+	// RoundTripper is the actual round-tripper that handles requests.
+	RoundTripper http.RoundTripper
+	// Scheme, if non-empty, is the scheme to use for requests to RoundTripper. This
+	// replaces the request's original scheme. This is useful when a custom scheme
+	// is used to trigger a custom transport, but the underlying RoundTripper still
+	// expects a non-custom scheme, such as "http" or "https".
+	Scheme string
+	// Close is an optional function that will be called (if non-nil) when this
+	// round-tripper is no longer needed.
+	Close func()
+
+	// prewarm is an optional function that will be called (if non-nil) to
+	// eagerly establish connections and perform any other checks so that there
+	// are no delays or unexpected errors incurred by the first HTTP request.
+	prewarm func(ctx context.Context, scheme, addr string) error
+	// TODO: expose warm-up capability from this package and export this?
+}
+
+// TransportConfig defines the options used to create a round-tripper.
+type TransportConfig struct {
+	// DialFunc should be used by the round-tripper establish network connections.
+	DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+	// ProxyFunc should be used to control HTTP proxying behavior. If the function
+	// returns a non-nil URL for a given request, that URL represents the HTTP proxy
+	// that should be used.
+	ProxyFunc func(*http.Request) (*url.URL, error)
+	// ProxyConnectHeadersFunc should be called, if non-nil, before sending a CONNECT
+	// request, to query for headers to add to that request. If it returns an
+	// error, the round-trip operation should fail immediately with that error.
+	ProxyConnectHeadersFunc func(ctx context.Context, proxyURL *url.URL, target string) (http.Header, error)
+	// MaxResponseHeaderBytes configures the maximum size of the response status
+	// line and response headers.
+	MaxResponseHeaderBytes int64
+	// IdleConnTimeout, if non-zero, is used to expire idle network connections.
+	IdleConnTimeout time.Duration
+	// TLSClientConfig, is present, provides custom TLS configuration for use
+	// with secure ("https") servers.
+	TLSClientConfig *tls.Config
+	// TLSHandshakeTimeout configures the maximum time allowed for a TLS handshake
+	// to complete.
+	TLSHandshakeTimeout time.Duration
+	// KeepWarm indicates that the round-tripper should try to keep a ready
+	// network connection open to reduce any delays in processing a request.
+	KeepWarm bool
+}
+
+func transportConfigFromOptions(opts *clientOptions) TransportConfig {
+	return TransportConfig{
+		DialFunc:                opts.dialFunc,
+		ProxyFunc:               opts.proxyFunc,
+		ProxyConnectHeadersFunc: opts.proxyConnectHeadersFunc,
+		MaxResponseHeaderBytes:  opts.maxResponseHeaderBytes,
+		IdleConnTimeout:         opts.idleConnTimeout,
+		TLSClientConfig:         opts.tlsClientConfig,
+		TLSHandshakeTimeout:     opts.tlsHandshakeTimeout,
+	}
+}
+
+type simpleTransport struct{}
+
+func (s simpleTransport) NewRoundTripper(_, _ string, opts TransportConfig) RoundTripperResult {
+	transport := &http.Transport{
+		Proxy:                  opts.ProxyFunc,
+		GetProxyConnectHeader:  opts.ProxyConnectHeadersFunc,
+		DialContext:            opts.DialFunc,
+		ForceAttemptHTTP2:      true,
+		MaxIdleConns:           1,
+		MaxIdleConnsPerHost:    1,
+		IdleConnTimeout:        opts.IdleConnTimeout,
+		TLSHandshakeTimeout:    opts.TLSHandshakeTimeout,
+		TLSClientConfig:        opts.TLSClientConfig,
+		MaxResponseHeaderBytes: opts.MaxResponseHeaderBytes,
+		ExpectContinueTimeout:  1 * time.Second,
+	}
+	// no way to populate pre-warm function since http.Transport doesn't provide
+	// any way to do that :(
+	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
+}
+
+type h2cTransport struct{}
+
+func (s h2cTransport) NewRoundTripper(_, _ string, opts TransportConfig) RoundTripperResult {
+	// We can't support all round tripper options with H2C.
+	transport := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			return defaultDialer.DialContext(ctx, network, addr)
+		},
+		// We don't bother setting the TLS config, because h2c is plain-text only
+		//TLSClientConfig:   opts.TLSClientConfig,
+		MaxHeaderListSize: uint32(opts.MaxResponseHeaderBytes),
+	}
+	return RoundTripperResult{RoundTripper: transport, Scheme: "http", Close: transport.CloseIdleConnections}
 }
 
 // mainTransport is the root of the transport hierarchy. For each target
@@ -112,7 +220,7 @@ func (m *mainTransport) closeKeepWarmPools() {
 		defer m.mu.Unlock()
 		pools = make([]*transportPool, 0, len(m.pools))
 		for dest, entry := range m.pools {
-			if !entry.pool.roundTripperOptions.KeepWarm {
+			if !entry.pool.transportConfig.KeepWarm {
 				continue
 			}
 			pools = append(pools, entry.pool)
@@ -194,29 +302,28 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 		return nil, fmt.Errorf("unsupported URL scheme %q", dest.scheme)
 	}
 
-	targetOpts := m.clientOptions.optionsForTarget(dest)
-	if targetOpts == nil {
-		return nil, fmt.Errorf("client does not allow requests to unconfigured target %s", dest)
+	if m.clientOptions.allowedTarget != nil && *m.clientOptions.allowedTarget != dest {
+		return nil, fmt.Errorf("client does not allow requests to target %s, only to %s", dest, *m.clientOptions.allowedTarget)
 	}
 	var applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	if targetOpts.requestTimeout > 0 {
+	if m.clientOptions.requestTimeout > 0 {
 		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			return context.WithTimeout(ctx, targetOpts.requestTimeout)
+			return context.WithTimeout(ctx, m.clientOptions.requestTimeout)
 		}
-	} else if targetOpts.defaultTimeout > 0 {
+	} else if m.clientOptions.defaultTimeout > 0 {
 		applyTimeout = func(ctx context.Context) (context.Context, context.CancelFunc) {
 			_, ok := ctx.Deadline()
 			if !ok {
 				// no existing deadline, so set one
-				return context.WithTimeout(ctx, targetOpts.defaultTimeout)
+				return context.WithTimeout(ctx, m.clientOptions.defaultTimeout)
 			}
 			return ctx, func() {}
 		}
 	}
 
-	opts := roundTripperOptionsFrom(targetOpts)
+	opts := transportConfigFromOptions(m.clientOptions)
 	// explicitly configured targets are kept warm
-	_, opts.KeepWarm = m.clientOptions.computedTargetOptions[dest]
+	opts.KeepWarm = m.clientOptions.allowedTarget != nil
 
 	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
 	if opts.TLSClientConfig == nil {
@@ -233,9 +340,9 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 	m.runningPools.Add(1)
 	pool = newTransportPool(
 		m.rootCtx,
-		targetOpts.resolver,
-		targetOpts.picker,
-		targetOpts.healthChecker,
+		m.clientOptions.resolver,
+		m.clientOptions.newPicker,
+		m.clientOptions.healthChecker,
 		dest,
 		applyTimeout,
 		schemeConf,
@@ -313,19 +420,14 @@ func (m *mainTransport) removePool(dest target) {
 }
 
 func (m *mainTransport) prewarm(ctx context.Context) error {
-	if len(m.clientOptions.computedTargetOptions) == 0 {
+	if m.clientOptions.allowedTarget == nil {
 		return nil
 	}
-	grp, grpcCtx := errgroup.WithContext(ctx)
-	for dest := range m.clientOptions.computedTargetOptions {
-		pool, err := m.getOrCreatePool(dest)
-		if err == nil {
-			grp.Go(func() error {
-				return pool.prewarm(grpcCtx)
-			})
-		}
+	pool, _ := m.getOrCreatePool(*m.clientOptions.allowedTarget)
+	if pool != nil {
+		return pool.prewarm(ctx)
 	}
-	return grp.Wait()
+	return nil
 }
 
 type target struct {
@@ -357,8 +459,8 @@ type transportPoolEntry struct {
 type transportPool struct {
 	dest                target // +checklocksignore: mu is not required, it just happens to be held always.
 	applyRequestTimeout func(ctx context.Context) (context.Context, context.CancelFunc)
-	roundTripperFactory RoundTripperFactory // +checklocksignore: mu is not required, it just happens to be held always.
-	roundTripperOptions RoundTripperOptions // +checklocksignore: mu is not required, it just happens to be held always.
+	transport           Transport       // +checklocksignore: mu is not required, it just happens to be held always.
+	transportConfig     TransportConfig // +checklocksignore: mu is not required, it just happens to be held always.
 	pickerInitialized   chan struct{}
 	resolver            io.Closer
 	reresolve           chan<- struct{}
@@ -384,12 +486,12 @@ type transportPool struct {
 func newTransportPool(
 	ctx context.Context,
 	res resolver.Resolver,
-	pickerFactory picker.Factory,
+	newPicker func(prev picker.Picker, allConns conn.Conns) picker.Picker,
 	checker health.Checker,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
-	rtFactory RoundTripperFactory,
-	opts RoundTripperOptions,
+	transport Transport,
+	transportConfig TransportConfig,
 	onClose func(),
 ) *transportPool {
 	pickerInitialized := make(chan struct{})
@@ -397,15 +499,15 @@ func newTransportPool(
 	pool := &transportPool{
 		dest:                dest,
 		applyRequestTimeout: applyTimeout,
-		roundTripperFactory: rtFactory,
-		roundTripperOptions: opts,
+		transport:           transport,
+		transportConfig:     transportConfig,
 		pickerInitialized:   pickerInitialized,
 		closeComplete:       make(chan struct{}),
 		reresolve:           reresolve,
 		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
-	pool.balancer = newBalancer(ctx, pickerFactory, checker, pool)
+	pool.balancer = newBalancer(ctx, newPicker, checker, pool)
 	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer, reresolve)
 	pool.balancer.start()
 	return pool
@@ -422,17 +524,17 @@ func (t *transportPool) NewConn(address resolver.Address) (conn.Conn, bool) {
 	// without first making a defensive copy. This is intended, though not
 	// documented.
 	// https://github.com/golang/go/issues/14275
-	// TODO: Possibly move to factory, since that's where ForceAttemptHTTP2 is
+	// TODO: Possibly move to the transport impl, since that's where ForceAttemptHTTP2 is
 	// actually set?
-	opts := t.roundTripperOptions
+	opts := t.transportConfig
 	opts.TLSClientConfig = opts.TLSClientConfig.Clone()
 
-	result := t.roundTripperFactory.New(t.dest.scheme, address.HostPort, opts)
+	result := t.transport.NewRoundTripper(t.dest.scheme, address.HostPort, opts)
 	newConn := &connection{
 		scheme:    result.Scheme,
 		addr:      address.HostPort,
 		conn:      result.RoundTripper,
-		doPrewarm: result.Prewarm,
+		doPrewarm: result.prewarm,
 		closed:    make(chan struct{}),
 	}
 	if newConn.scheme == "" {
@@ -589,7 +691,7 @@ func (t *transportPool) getConnection(request *http.Request) (conn.Conn, func(),
 }
 
 func (t *transportPool) prewarm(ctx context.Context) error {
-	if !t.roundTripperOptions.KeepWarm {
+	if !t.transportConfig.KeepWarm {
 		// not keeping this one warm...
 		return nil
 	}
@@ -692,7 +794,7 @@ type connection struct {
 	scheme string
 	addr   string
 	conn   http.RoundTripper
-	attrs  atomic.Pointer[resolver.Attrs]
+	attrs  atomic.Pointer[attribute.Values]
 
 	doClose   func()
 	doPrewarm func(context.Context, string, string) error
@@ -714,8 +816,8 @@ func (c *connection) Address() resolver.Address {
 	return addr
 }
 
-func (c *connection) UpdateAttributes(attrs resolver.Attrs) {
-	c.attrs.Store(&attrs)
+func (c *connection) UpdateAttributes(values attribute.Values) {
+	c.attrs.Store(&values)
 }
 
 func (c *connection) RoundTrip(req *http.Request, whenDone func()) (*http.Response, error) {

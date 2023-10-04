@@ -23,32 +23,14 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
-//nolint:gochecknoglobals
-var (
-	// PowerOfTwoFactory creates pickers that select two connections at random
-	// and pick the one with fewer requests. This takes advantage of the
-	// [power of two random choices], which provides substantial benefits
-	// over a simple random picker and, unlike the least-loaded policy, doesn't
-	// need to maintain a heap.
-	//
-	// [power of two random choices]: http://www.eecs.harvard.edu/~michaelm/postscripts/handbook2001.pdf
-	PowerOfTwoFactory Factory = &powerOfTwoFactory{}
-)
-
-type powerOfTwoFactory struct{}
-
-type powerOfTwo struct {
-	conns []*powerOfTwoConnItem
-	rng   *rand.Rand
-}
-
-type powerOfTwoConnItem struct {
-	conn conn.Conn
-	// +checkatomic
-	load atomic.Int64
-}
-
-func (f powerOfTwoFactory) New(prev Picker, allConns conn.Conns) Picker {
+// NewPowerOfTwo creates pickers that select two connections at random
+// and pick the one with fewer requests. This takes advantage of the
+// [power of two random choices], which provides substantial benefits
+// over a simple random picker and, unlike the least-loaded policy, doesn't
+// need to maintain a heap.
+//
+// [power of two random choices]: http://www.eecs.harvard.edu/~michaelm/postscripts/handbook2001.pdf
+func NewPowerOfTwo(prev Picker, allConns conn.Conns) Picker {
 	itemMap := map[conn.Conn]*powerOfTwoConnItem{}
 
 	if prev, ok := prev.(*powerOfTwo); ok {
@@ -71,6 +53,17 @@ func (f powerOfTwoFactory) New(prev Picker, allConns conn.Conns) Picker {
 		conns: newConns,
 		rng:   internal.NewLockedRand(),
 	}
+}
+
+type powerOfTwo struct {
+	conns []*powerOfTwoConnItem
+	rng   *rand.Rand
+}
+
+type powerOfTwoConnItem struct {
+	conn conn.Conn
+	// +checkatomic
+	load atomic.Int64
 }
 
 func (p *powerOfTwo) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {

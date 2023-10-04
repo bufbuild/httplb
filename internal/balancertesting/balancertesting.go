@@ -26,17 +26,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
 	"github.com/bufbuild/httplb/internal/conns"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
-)
-
-//nolint:gochecknoglobals
-var (
-	// FakePickerFactory returns instances of *FakePicker.
-	FakePickerFactory picker.Factory = fakePickerFactory{}
 )
 
 // FakeConn is an implementation of conn.Conn that can be used for testing.
@@ -65,9 +60,9 @@ func (c *FakeConn) Address() resolver.Address {
 
 // UpdateAttributes implements the conn.Conn interface. It updates the
 // attributes on this connection's associated address.
-func (c *FakeConn) UpdateAttributes(attrs resolver.Attrs) {
+func (c *FakeConn) UpdateAttributes(values attribute.Values) {
 	addr := c.Address()
-	addr.Attributes = attrs
+	addr.Attributes = values
 	c.addr.Store(&addr)
 }
 
@@ -281,13 +276,17 @@ type PickerState struct {
 // returns the first picker it encounters in its set. Its set is exported so test
 // code can examine the set of connections used to create the picker.
 //
-// Also see FakePickerFactory.
+// Also see NewFakePicker.
 type FakePicker struct {
 	Conns conns.Set
 }
 
 // NewFakePicker constructs a new FakePicker with the given connections.
-func NewFakePicker(connections conn.Conns) *FakePicker {
+//
+// The return type is picker.Picker so this function can be directly used as
+// a "new picker" function with a balancer. But this function always returns
+// values whose type is *FakePicker.
+func NewFakePicker(_ picker.Picker, connections conn.Conns) picker.Picker {
 	return &FakePicker{Conns: conns.ToSet(connections)}
 }
 
@@ -297,12 +296,6 @@ func (p *FakePicker) Pick(*http.Request) (conn conn.Conn, whenDone func(), err e
 		return c, nil, nil
 	}
 	return nil, nil, errors.New("zero conns")
-}
-
-type fakePickerFactory struct{}
-
-func (f fakePickerFactory) New(_ picker.Picker, allConns conn.Conns) picker.Picker {
-	return NewFakePicker(allConns)
 }
 
 // ConnHealth is map that tracks the health state of connections.

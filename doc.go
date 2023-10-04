@@ -24,12 +24,6 @@
 // [name resolver] or a custom [load balancing policy] and for enabling
 // active [health checking].
 //
-// The returned client has a notion of being "warmed up", via the Prewarm
-// method. This function eagerly resolves names, issues health checks
-// (if so configured), and awaits a minimum number of ready connections.
-// The [WithBackendTarget] option is used to tell the client which
-// connections need to be warmed up.
-//
 // The returned client also has a notion of "closing", via its Close
 // method. This step will wait for outstanding requests to complete and
 // then close all connections and also teardown any other goroutines that
@@ -93,10 +87,10 @@
 //
 // # Custom Transports
 //
-// One of the options in this package, [WithRoundTripperFactory], allows
-// users to implement custom transports and select them using custom URL
-// schemes. This could be used, for example, to enable HTTP/3 with a URL
-// like "http3://...".
+// One of the options in this package, [WithTransport], allows users to
+// implement custom transports and select them using custom URL schemes.
+// This could be used, for example, to enable HTTP/3 with a URL such as
+// "http3://...".
 //
 // This package even uses this capability to provide simple use of HTTP/2
 // over plaintext, also called "h2c". In addition to supporting "http" and

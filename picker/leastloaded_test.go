@@ -30,14 +30,14 @@ func TestLeastLoadedRoundRobinPicker(t *testing.T) {
 	// need to ensure that order repeats as expected
 
 	dummyConn := conn.Conn(nil)
-	pick := picker.LeastLoadedRoundRobinFactory.New(nil, dummyConns{[]conn.Conn{dummyConn}})
+	pick := picker.NewLeastLoadedRoundRobin(nil, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err := pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 
 	// TODO: test (whitebox?) that state is retained between pickers
 
-	pick = picker.LeastLoadedRoundRobinFactory.New(pick, dummyConns{[]conn.Conn{dummyConn}})
+	pick = picker.NewLeastLoadedRoundRobin(pick, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err = pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
@@ -49,14 +49,14 @@ func TestLeastLoadedRandomPicker(t *testing.T) {
 	// TODO: when possible, need to test with multiple connections
 
 	dummyConn := conn.Conn(nil)
-	pick := picker.LeastLoadedRandomFactory.New(nil, dummyConns{[]conn.Conn{dummyConn}})
+	pick := picker.NewLeastLoadedRandom(nil, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err := pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 
 	// TODO: test (whitebox?) that state is retained between pickers
 
-	pick = picker.LeastLoadedRandomFactory.New(pick, dummyConns{[]conn.Conn{dummyConn}})
+	pick = picker.NewLeastLoadedRandom(pick, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err = pick.Pick(&http.Request{})
 	assert.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)

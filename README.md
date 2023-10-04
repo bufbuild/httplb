@@ -28,7 +28,7 @@ Here's a quick example of how to get started with `httplb`:
 package main
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -42,7 +42,7 @@ func main() {
 			// Use a resolver for IPv4. You can pass "ip" for dual-stack setups,
 			// or "ip6" for pure IPv6. This defaults to "ip" and assumes IPv6
 			// is suitable for your deployment.
-			resolver.NewDNSResolverFactory(net.DefaultResolver, "ip4", 5*time.Minute),
+			resolver.NewDNSResolver(net.DefaultResolver, "ip4", 5*time.Minute),
 		),
 	)
 	defer client.Close()
