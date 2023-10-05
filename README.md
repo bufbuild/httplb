@@ -8,7 +8,7 @@
 provides client-side load balancing for `net/http` clients. By default,
 clients are designed for server-to-server and RPC workloads:
 
-* They support HTTP/1.1, HTTP/2, and h2c.
+* They support HTTP/1.1, HTTP/2, and [H2C](https://en.wikipedia.org/wiki/HTTP/2#Encryption).
 * They periodically re-resolve names using DNS.
 * They use a round-robin load balancing policy.
 
@@ -76,7 +76,8 @@ func main() {
 }
 ```
 
-It's also easy to use H2C. Just use the `h2c` scheme in your URLs instead of `http`:
+If you know the server supports HTTP/2 without TLS (HTTP/2 over cleartext, or H2C for short), use
+the `h2c` scheme in your URLs instead of `http`:
 
 ```go
 	pingClient := pingv1connect.NewPingServiceClient(
