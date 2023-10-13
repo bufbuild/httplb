@@ -403,7 +403,7 @@ func (opts *clientOptions) applyDefaults() {
 		opts.newPicker = picker.NewRoundRobin
 	}
 	if opts.healthChecker == nil {
-		opts.healthChecker = health.NoOpChecker
+		opts.healthChecker = health.NopChecker
 	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext

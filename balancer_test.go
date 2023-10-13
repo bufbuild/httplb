@@ -206,7 +206,7 @@ func TestConnManager(t *testing.T) {
 func TestBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
 	pool := balancertesting.NewFakeConnPool()
-	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NoOpChecker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NopChecker, pool)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.start()
 	// Initial resolve
