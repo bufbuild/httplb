@@ -1,4 +1,4 @@
-# Go HTTP Client-Side Load Balancing
+# httplb
 
 [![Build](https://github.com/bufbuild/httplb/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/bufbuild/httplb/actions/workflows/ci.yaml)
 [![Report Card](https://goreportcard.com/badge/github.com/bufbuild/httplb)](https://goreportcard.com/report/github.com/bufbuild/httplb)
@@ -33,17 +33,13 @@ import (
 	"time"
 
 	"github.com/bufbuild/httplb"
-	"github.com/bufbuild/httplb/resolver"
+	"github.com/bufbuild/httplb/picker"
 )
 
 func main() {
 	client := httplb.NewClient(
-		httplb.WithResolver(
-			// Use a resolver for IPv4. You can pass "ip" for dual-stack setups,
-			// or "ip6" for pure IPv6. This defaults to "ip" and assumes IPv6
-			// is suitable for your deployment.
-			resolver.NewDNSResolver(net.DefaultResolver, "ip4", 5*time.Minute),
-		),
+		// Switch from the default round-robin policy to power-of-two.
+		httplb.WithPicker(picker.NewPowerOfTwo),
 	)
 	defer client.Close()
 	resp, err := client.Get("https://example.com")
@@ -55,7 +51,8 @@ func main() {
 }
 ```
 
-And here is how you can use `httplb` with `connect-go`:
+If you're using [Connect](https://github.com/connectrpc/connect-go), you can
+use `httplb` for your RPC clients:
 
 ```go
 func main() {
@@ -99,6 +96,5 @@ This project is currently in **alpha**. The API should be considered unstable an
 
 ## Legal
 
-Offered under the [Apache 2 license][badges_license].
+Offered under the [Apache 2 license](LICENSE).
 
-[badges_license]: https://github.com/bufbuild/knit-go/blob/main/LICENSE
