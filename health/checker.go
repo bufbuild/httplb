@@ -23,9 +23,9 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	// NoOpChecker is a checker implementation that does nothing. It assumes
+	// NopChecker is a checker implementation that does nothing. It assumes
 	// the state of all connections is healthy.
-	NoOpChecker Checker = noOpChecker{}
+	NopChecker Checker = nopChecker{}
 )
 
 // Checker manages health checks. It creates new checking processes as new
@@ -48,15 +48,15 @@ type Tracker interface {
 	UpdateHealthState(conn.Conn, State)
 }
 
-type noOpChecker struct{}
+type nopChecker struct{}
 
-func (n noOpChecker) New(_ context.Context, conn conn.Conn, tracker Tracker) io.Closer {
+func (n nopChecker) New(_ context.Context, conn conn.Conn, tracker Tracker) io.Closer {
 	go tracker.UpdateHealthState(conn, StateHealthy)
-	return noOpCloser{}
+	return nopCloser{}
 }
 
-type noOpCloser struct{}
+type nopCloser struct{}
 
-func (n noOpCloser) Close() error {
+func (n nopCloser) Close() error {
 	return nil
 }

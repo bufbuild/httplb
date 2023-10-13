@@ -40,17 +40,20 @@ var (
 	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, "ip", defaultNameTTL)
 )
 
-// Client is an HTTP client that includes client-side load balancing logic. It
-// embeds a standard *[http.Client] and exposes some additional operations.
+// Client is an HTTP client that supports configurable client-side load
+// balancing, name resolution, and subsetting. It embeds the standard library's
+// *[http.Client] and exposes some additional operations.
 //
-// If working with a library that requires an *[http.Client], simply use the
-// embedded Client field. If working with a library that requires an
-// [http.RoundTripper], use the Transport field.
+// If working with a library that requires an *[http.Client], use the embedded
+// Client. If working with a library that requires an [http.RoundTripper], use
+// the Transport field.
 type Client struct {
 	*http.Client
 }
 
-// NewClient returns a new HTTP client that uses the given options.
+// NewClient constructs a new HTTP client optimized for server-to-server
+// communication. By default, the client re-resolves addresses every 5 minutes
+// and uses a round-robin load balancing policy.
 func NewClient(options ...ClientOption) *Client {
 	var opts clientOptions
 	for _, opt := range options {
@@ -65,8 +68,8 @@ func NewClient(options ...ClientOption) *Client {
 	}
 }
 
-// Close closes the HTTP client, releasing any resources and stopping
-// any associated background goroutines.
+// Close the HTTP client, releasing any resources and stopping any associated
+// background goroutines.
 func (c *Client) Close() error {
 	transport, ok := c.Transport.(*mainTransport)
 	if !ok {
@@ -400,7 +403,7 @@ func (opts *clientOptions) applyDefaults() {
 		opts.newPicker = picker.NewRoundRobin
 	}
 	if opts.healthChecker == nil {
-		opts.healthChecker = health.NoOpChecker
+		opts.healthChecker = health.NopChecker
 	}
 	if opts.dialFunc == nil {
 		opts.dialFunc = defaultDialer.DialContext
