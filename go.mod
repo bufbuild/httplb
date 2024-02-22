@@ -1,6 +1,6 @@
 module github.com/bufbuild/httplb
 
-go 1.19
+go 1.20
 
 require (
 	github.com/jonboulle/clockwork v0.4.0
