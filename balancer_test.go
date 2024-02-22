@@ -123,7 +123,7 @@ func TestConnManager(t *testing.T) {
 	require.Equal(t, newAddrs, latestUpdate.newAddrs)
 	require.Equal(t, []conn.Conn{conn4, conn5, conn6}, latestUpdate.removeConns)
 	conns = pool.SnapshotConns()
-	require.Equal(t, 10, len(conns))
+	require.Len(t, conns, 10)
 	conn1i7 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 7)
 	conn1i8 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 8)
 	conn1i9 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 9)
@@ -154,7 +154,7 @@ func TestConnManager(t *testing.T) {
 	require.Empty(t, latestUpdate.newAddrs)
 	require.Equal(t, []conn.Conn{conn1i8, conn1i9, conn2i11, conn3i13}, latestUpdate.removeConns)
 	conns = pool.SnapshotConns()
-	require.Equal(t, 6, len(conns))
+	require.Len(t, conns, 6)
 	// make sure attributes on existing connections were updated to latest
 	// values from resolver
 	require.Equal(t, attrs1a, conn1.Address().Attributes)

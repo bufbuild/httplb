@@ -66,13 +66,13 @@ func TestResolverTTL(t *testing.T) {
 
 	waitForResolve()
 	err := testClock.BlockUntilContext(ctx, 1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// When advancing the clock past the TTL, we should get a new probe.
 	testClock.Advance(testTTL)
 	waitForResolve()
 	err = testClock.BlockUntilContext(ctx, 1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// When we call ResolveNow, we should get a new probe.
 	select {

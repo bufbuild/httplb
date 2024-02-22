@@ -21,6 +21,7 @@ import (
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRoundRobinPicker(t *testing.T) {
@@ -36,6 +37,6 @@ func TestRoundRobinPicker(t *testing.T) {
 
 	picker := picker.NewRoundRobin(nil, allConns)
 	conn, _, err := picker.Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, conn)
 }

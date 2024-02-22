@@ -337,7 +337,7 @@ type RedirectFunc func(req *http.Request, via []*http.Request) error
 // up to the given number of redirects. If a request sequence results in more
 // redirects than the given limit, the request will fail.
 func FollowRedirects(limit int) RedirectFunc {
-	return func(req *http.Request, via []*http.Request) error {
+	return func(_ *http.Request, via []*http.Request) error {
 		if len(via) > limit {
 			return fmt.Errorf("too many redirects (> %d)", limit)
 		}
@@ -382,7 +382,7 @@ func (opts *clientOptions) applyDefaults() {
 		opts.schemes = map[string]Transport{}
 	}
 	if opts.redirectFunc == nil {
-		opts.redirectFunc = func(req *http.Request, via []*http.Request) error {
+		opts.redirectFunc = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}

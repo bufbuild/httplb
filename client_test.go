@@ -44,7 +44,7 @@ func TestNewClient_Basic(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
 	clientHTTP := makeClient(t, ctx,
@@ -66,13 +66,13 @@ func TestNewClient_MultipleTargets(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr1 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr1 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("tweedle dee"))
 	}))
-	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr2 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("tweedle dum"))
 	}))
-	addr3 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr3 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("twinkle twinkle little bat")) //nolint:dupword //intentional!
 	}))
 	client := makeClient(t, ctx)
@@ -126,15 +126,15 @@ func TestNewClient_LoadBalancing(t *testing.T) {
 
 	ctx := context.Background()
 	var counters [3]atomic.Int32
-	addr1 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr1 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		counters[0].Add(1)
 		_, _ = w.Write(([]byte)("got it!"))
 	}))
-	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr2 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		counters[1].Add(1)
 		_, _ = w.Write(([]byte)("got it!"))
 	}))
-	addr3 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr3 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		counters[2].Add(1)
 		_, _ = w.Write(([]byte)("got it!"))
 	}))
@@ -180,9 +180,9 @@ func TestNewClient_TransportConfig(t *testing.T) {
 		}
 		_, _ = w.Write(([]byte)("got it"))
 	})
-	addr1 := startServer(t, ctx, handler)
-	addr2 := startServer(t, ctx, handler)
-	addr3 := startServer(t, ctx, handler)
+	addr1 := startServer(t, handler)
+	addr2 := startServer(t, handler)
+	addr3 := startServer(t, handler)
 	var dialCount atomic.Int32
 	tlsConf := &tls.Config{ServerName: "example.com"} //nolint:gosec
 	transportOption := WithTransport("http", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
@@ -294,9 +294,9 @@ func TestNewClient_CustomTransport(t *testing.T) {
 
 	ctx := context.Background()
 	client := makeClient(t, ctx,
-		WithTransport("foo", transportFunc(func(scheme, target string, options TransportConfig) RoundTripperResult {
+		WithTransport("foo", transportFunc(func(_, _ string, _ TransportConfig) RoundTripperResult {
 			return RoundTripperResult{
-				RoundTripper: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				RoundTripper: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
 					recorder := httptest.NewRecorder()
 					_, _ = recorder.WriteString("foo bar")
 					return recorder.Result(), nil
@@ -312,10 +312,10 @@ func TestNewClient_CloseIdleTransports(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr1 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr1 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
-	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr2 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
 	client := makeClient(t, ctx,
@@ -370,7 +370,7 @@ func TestNewClient_Timeouts(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// optional request body indicates number of milliseconds to delay before returning
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -434,10 +434,10 @@ func TestNewClient_Proxy(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
-	proxyAddr, proxyCounter := startProxy(t, ctx)
+	proxyAddr, proxyCounter := startProxy(t)
 
 	res := fakeResolver{map[string][]string{
 		"foo.com": {addr},
@@ -481,7 +481,7 @@ func TestNewClient_TLS(t *testing.T) {
 	require.NoError(t, err, "loading localhost cert failed")
 
 	ctx := context.Background()
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("success"))
 	}))
 	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}} //nolint:gosec
@@ -516,10 +516,10 @@ func TestNewClient_DisallowUnconfiguredTarget(t *testing.T) {
 	ensureGoroutinesCleanedUp(t)
 
 	ctx := context.Background()
-	addr1 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr1 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("got it"))
 	}))
-	addr2 := startServer(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	addr2 := startServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(([]byte)("don't got it"))
 	}))
 	client := makeClient(t, ctx, WithAllowBackendTarget("http", addr1))
@@ -533,7 +533,9 @@ func TestNewClient_DisallowUnconfiguredTarget(t *testing.T) {
 func sendGetRequest(t *testing.T, ctx context.Context, client *Client, url string, expectations func(*testing.T, *http.Response, error)) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	require.NoError(t, err)
+	if !assert.NoError(t, err) { //nolint:testifylint
+		return
+	}
 	resp, err := client.Do(req)
 	expectations(t, resp, err)
 }
@@ -550,13 +552,19 @@ func sendPostRequest(t *testing.T, ctx context.Context, client *Client, url stri
 func expectSuccess(contents string) func(*testing.T, *http.Response, error) {
 	return func(t *testing.T, resp *http.Response, err error) {
 		t.Helper()
-		require.NoError(t, err)
+		if !assert.NoError(t, err) { //nolint:testifylint
+			return
+		}
 		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) { //nolint:testifylint
+			return
+		}
 		err = resp.Body.Close()
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, contents, string(body))
+		if !assert.NoError(t, err) { //nolint:testifylint
+			return
+		}
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, contents, string(body))
 	}
 }
 
@@ -568,9 +576,11 @@ func expectError(message string) func(*testing.T, *http.Response, error) {
 		}
 		// if no error, we must drain and close body
 		_, err = io.ReadAll(resp.Body)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) { //nolint:testifylint
+			return
+		}
 		err = resp.Body.Close()
-		require.NoError(t, err)
+		assert.NoError(t, err)
 	}
 }
 
@@ -588,33 +598,22 @@ func expectRedirect(location string) func(*testing.T, *http.Response, error) {
 	}
 }
 
-//nolint:revive // linter wants ctx first, but t first is okay
-func startServer(t *testing.T, ctx context.Context, handler http.Handler) string {
+func startServer(t *testing.T, handler http.Handler) string {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	svr := http.Server{
+	svr := httptest.NewUnstartedServer(nil)
+	svr.Config = &http.Server{
 		Handler:           h2c.NewHandler(handler, &http2.Server{}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	go func() {
-		err := svr.Serve(listener)
-		require.Equal(t, http.ErrServerClosed, err)
-	}()
-	t.Cleanup(func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 5*time.Second)
-		defer shutdownCancel()
-		err := svr.Shutdown(shutdownCtx)
-		require.NoError(t, err)
-	})
-	t.Logf("Number of goroutines after server %s started: %d", listener.Addr().String(), runtime.NumGoroutine())
+	svr.Start()
+	t.Cleanup(svr.Close)
+	t.Logf("Number of goroutines after server %s started: %d", svr.Listener.Addr().String(), runtime.NumGoroutine())
 
-	return listener.Addr().String()
+	return svr.Listener.Addr().String()
 }
 
-//nolint:revive // linter wants ctx first, but t first is okay
-func startProxy(t *testing.T, ctx context.Context) (string, *atomic.Int32) {
+func startProxy(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
 
 	var count atomic.Int32
@@ -666,7 +665,7 @@ func startProxy(t *testing.T, ctx context.Context) (string, *atomic.Int32) {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 	})
-	return startServer(t, ctx, handler), &count
+	return startServer(t, handler), &count
 }
 
 func ensureGoroutinesCleanedUp(t *testing.T) {

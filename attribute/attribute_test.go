@@ -55,5 +55,5 @@ func TestAttributeKeysUniquePointers(t *testing.T) {
 	// were inadvertently defined as an empty struct, then
 	// NewKey would always return the same pointer. This
 	// guards against such a mistake.)
-	assert.NotSame(t, NewKey[string](), NewKey[string]())
+	assert.NotSame(t, NewKey[string](), NewKey[string]()) //nolint:testifylint
 }
