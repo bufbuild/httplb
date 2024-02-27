@@ -82,7 +82,3 @@ issues:
         # For some reason, this linter is coming up with several
         # false positives in this file ¯\_(ツ)_/¯
         - bodyclose
-    # Tests check for global state via goroutine count
-    - path: client_test.go
-      linters:
-        - tparallel
