@@ -67,7 +67,7 @@ checkgenerate:
 
 $(BIN)/license-header: Makefile
 	@mkdir -p $(@D)
-	go install github.com/bufbuild/buf/private/pkg/licenseheader/cmd/license-header@v1.26.1
+	go install github.com/bufbuild/buf/private/pkg/licenseheader/cmd/license-header@v1.29.0
 
 $(BIN)/golangci-lint: Makefile
 	@mkdir -p $(@D)
