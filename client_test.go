@@ -549,18 +549,19 @@ func sendPostRequest(t *testing.T, ctx context.Context, client *Client, url stri
 	expectations(t, resp, err)
 }
 
+//nolint:testifylint // must use assert for concurrent calls
 func expectSuccess(contents string) func(*testing.T, *http.Response, error) {
 	return func(t *testing.T, resp *http.Response, err error) {
 		t.Helper()
-		if !assert.NoError(t, err) { //nolint:testifylint
+		if !assert.NoError(t, err) {
 			return
 		}
 		body, err := io.ReadAll(resp.Body)
-		if !assert.NoError(t, err) { //nolint:testifylint
+		if !assert.NoError(t, err) {
 			return
 		}
 		err = resp.Body.Close()
-		if !assert.NoError(t, err) { //nolint:testifylint
+		if !assert.NoError(t, err) {
 			return
 		}
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
