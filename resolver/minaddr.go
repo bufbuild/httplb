@@ -24,10 +24,10 @@ import (
 // set of addresses, it replicates those addresses until the give minimum is reached.
 //
 // This will cause a client to effectively make redundant connections to the same address
-// which is particularly useful when the addresses are virtual IPs, which  actually have
+// which is particularly useful when the addresses are virtual IPs, which actually have
 // multiple servers behind them. This is appropriate for environments like Kubernetes
 // (which uses virtual IPs for non-headless services) and for use with services that have
-// hardware/cloud load balancers in front.
+// layer-4 (TCP) proxies/load balancers in front of them.
 //
 // To avoid "hot spotting", where one backend address gets more load than others, this
 // always fully replicates the set. So it will always report at least minAddresses, but
