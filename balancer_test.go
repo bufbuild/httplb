@@ -17,6 +17,7 @@ package httplb
 import (
 	"context"
 	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConnManager(t *testing.T) {
+func TestConnManager_ReconcileAddresses(t *testing.T) {
 	t.Parallel()
 	type updateReq struct {
 		newAddrs    []resolver.Address
@@ -72,7 +73,7 @@ func TestConnManager(t *testing.T) {
 			return updateReq{}
 		}
 	}
-	var connMgr connManager
+	connMgr := connManager{updateFunc: testUpdate}
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
 		{HostPort: "1.2.3.2"},
@@ -81,18 +82,24 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.5"},
 		{HostPort: "1.2.3.6"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.reconcileAddresses(addrs)
 	latestUpdate := getLatestUpdate()
 	require.Equal(t, addrs, latestUpdate.newAddrs)
 	require.Empty(t, latestUpdate.removeConns)
 	conns := pool.SnapshotConns()
-	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
-	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
-	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
-	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
-	conn5 := balancertesting.FindConn(conns, addrs[4], 5)
-	conn6 := balancertesting.FindConn(conns, addrs[5], 6)
 	require.Equal(t, len(addrs), len(conns))
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	require.NotNil(t, conn1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	require.NotNil(t, conn2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	require.NotNil(t, conn3)
+	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	require.NotNil(t, conn4)
+	conn5 := balancertesting.FindConn(conns, addrs[4], 5)
+	require.NotNil(t, conn5)
+	conn6 := balancertesting.FindConn(conns, addrs[5], 6)
+	require.NotNil(t, conn6)
 
 	// let's try a different set that includes duplicates
 	addrs = []resolver.Address{
@@ -107,7 +114,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.3"},
 		{HostPort: "1.2.3.3"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.reconcileAddresses(addrs)
 	latestUpdate = getLatestUpdate()
 	// 10 entries needed, and we start with 3. So we need
 	// 2x more of each, but 3x of the first
@@ -125,12 +132,19 @@ func TestConnManager(t *testing.T) {
 	conns = pool.SnapshotConns()
 	require.Equal(t, 10, len(conns))
 	conn1i7 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 7)
+	require.NotNil(t, conn1i7)
 	conn1i8 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 8)
+	require.NotNil(t, conn1i8)
 	conn1i9 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.1"}, 9)
+	require.NotNil(t, conn1i9)
 	conn2i10 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.2"}, 10)
+	require.NotNil(t, conn2i10)
 	conn2i11 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.2"}, 11)
+	require.NotNil(t, conn2i11)
 	conn3i12 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.3"}, 12)
+	require.NotNil(t, conn3i12)
 	conn3i13 := balancertesting.FindConn(conns, resolver.Address{HostPort: "1.2.3.3"}, 13)
+	require.NotNil(t, conn3i13)
 
 	// Still multiple addresses, but different counts, to make sure the conn manager
 	// correctly reconciles.
@@ -149,7 +163,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.3", Attributes: attrs3a},
 		{HostPort: "1.2.3.3", Attributes: attrs3b},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.reconcileAddresses(addrs)
 	latestUpdate = getLatestUpdate()
 	require.Empty(t, latestUpdate.newAddrs)
 	require.Equal(t, []conn.Conn{conn1i8, conn1i9, conn2i11, conn3i13}, latestUpdate.removeConns)
@@ -184,7 +198,7 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.6"},
 		{HostPort: "1.2.3.8"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.reconcileAddresses(addrs)
 	// Wanted to create 1.2.3.4, 1.2.3.6, and 1.2.3.8, but only first two created.
 	latestUpdate = getLatestUpdate()
 	require.Equal(t, addrs[1:], latestUpdate.newAddrs)
@@ -197,18 +211,125 @@ func TestConnManager(t *testing.T) {
 		{HostPort: "1.2.3.6"},
 		{HostPort: "1.2.3.8"},
 	}
-	connMgr.reconcileAddresses(addrs, testUpdate)
+	connMgr.reconcileAddresses(addrs)
 	latestUpdate = getLatestUpdate()
 	require.Equal(t, addrs[3:], latestUpdate.newAddrs)
 	require.Empty(t, latestUpdate.removeConns)
 }
 
+func TestConnManager_RecycleConns(t *testing.T) {
+	t.Parallel()
+	type updateReq struct {
+		newAddrs    []resolver.Address
+		removeConns []conn.Conn
+	}
+	updates := make(chan updateReq, 1)
+	pool := balancertesting.NewFakeConnPool()
+	createConns := func(newAddrs []resolver.Address) []conn.Conn {
+		conns := make([]conn.Conn, len(newAddrs))
+		for i := range newAddrs {
+			var ok bool
+			conns[i], ok = pool.NewConn(newAddrs[i])
+			require.True(t, ok)
+		}
+		return conns
+	}
+	testUpdate := func(newAddrs []resolver.Address, removeConns []conn.Conn) (added []conn.Conn) {
+		// deterministic reconciliation FTW!
+		balancertesting.DeterministicReconciler(newAddrs, removeConns)
+
+		select {
+		case updates <- updateReq{newAddrs: newAddrs, removeConns: removeConns}:
+		default:
+			require.FailNow(t, "channel should not be full")
+		}
+		for _, c := range removeConns {
+			require.True(t, pool.RemoveConn(c))
+		}
+		return createConns(newAddrs)
+	}
+	peekLatestUpdate := func() (updateReq, bool) {
+		select {
+		case latest := <-updates:
+			return latest, true
+		default:
+			return updateReq{}, false
+		}
+	}
+	getLatestUpdate := func() updateReq {
+		req, ok := peekLatestUpdate()
+		require.True(t, ok, "no update available")
+		return req
+	}
+	connMgr := connManager{updateFunc: testUpdate}
+	addrs := []resolver.Address{
+		{HostPort: "1.2.3.1"},
+		{HostPort: "1.2.3.2"},
+		{HostPort: "1.2.3.3"},
+		{HostPort: "1.2.3.4"},
+	}
+	connMgr.reconcileAddresses(addrs)
+	latestUpdate := getLatestUpdate()
+	require.Equal(t, addrs, latestUpdate.newAddrs)
+	require.Empty(t, latestUpdate.removeConns)
+	conns := pool.SnapshotConns()
+	require.Equal(t, len(addrs), len(conns))
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	require.NotNil(t, conn1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	require.NotNil(t, conn2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	require.NotNil(t, conn3)
+	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	require.NotNil(t, conn4)
+
+	toRecycle := []conn.Conn{conn1}
+	connMgr.recycleConns(toRecycle)
+	latestUpdate = getLatestUpdate()
+	require.Equal(t, []resolver.Address{conn1.Address()}, latestUpdate.newAddrs)
+	require.Equal(t, toRecycle, latestUpdate.removeConns)
+	conns = pool.SnapshotConns()
+	conn1i5 := balancertesting.FindConn(conns, addrs[0], 5)
+	require.NotNil(t, conn1i5)
+
+	// no-op for a connection that has already been removed
+	connMgr.recycleConns(toRecycle)
+	latestUpdate, ok := peekLatestUpdate()
+	require.False(t, ok, "unexpected update was generated: %+v", latestUpdate)
+
+	// recycle addr #1 again
+	toRecycle = []conn.Conn{conn1i5}
+	connMgr.recycleConns(toRecycle)
+	latestUpdate = getLatestUpdate()
+	require.Equal(t, []resolver.Address{conn1.Address()}, latestUpdate.newAddrs)
+	require.Equal(t, toRecycle, latestUpdate.removeConns)
+	conns = pool.SnapshotConns()
+	conn1i6 := balancertesting.FindConn(conns, addrs[0], 6)
+	require.NotNil(t, conn1i6)
+
+	// recycle several together, one that has already been removed
+	toRecycle = []conn.Conn{conn1i5, conn2, conn4}
+	connMgr.recycleConns(toRecycle)
+	latestUpdate = getLatestUpdate()
+	require.Equal(t, []resolver.Address{conn2.Address(), conn4.Address()}, latestUpdate.newAddrs)
+	require.Equal(t, []conn.Conn{conn2, conn4}, latestUpdate.removeConns)
+	conns = pool.SnapshotConns()
+	conn2i7 := balancertesting.FindConn(conns, addrs[1], 7)
+	require.NotNil(t, conn2i7)
+	conn4i8 := balancertesting.FindConn(conns, addrs[3], 8)
+	require.NotNil(t, conn4i8)
+}
+
 func TestBalancer_BasicConnManagement(t *testing.T) {
 	t.Parallel()
 	pool := balancertesting.NewFakeConnPool()
-	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NopChecker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NopChecker, pool, 0)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.start()
+	t.Cleanup(func() {
+		err := balancer.Close()
+		require.NoError(t, err)
+	})
 	// Initial resolve
 	addrs := []resolver.Address{
 		{HostPort: "1.2.3.1"},
@@ -263,9 +384,6 @@ func TestBalancer_BasicConnManagement(t *testing.T) {
 
 	// Also make sure the set of all conns (not just ones that the picker sees) arrives at the right state
 	awaitConns(t, pool, addrs, []int{1, 2, 7, 8})
-
-	err := balancer.Close()
-	require.NoError(t, err)
 }
 
 func TestBalancer_HealthChecking(t *testing.T) {
@@ -285,9 +403,15 @@ func TestBalancer_HealthChecking(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool, 0)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.start()
+	t.Cleanup(func() {
+		err := balancer.Close()
+		require.NoError(t, err)
+		checkers := checker.SnapshotConns()
+		require.Empty(t, checkers)
+	})
 
 	checker.SetInitialState(health.StateUnknown)
 	warmChan1 := make(chan struct{})
@@ -322,9 +446,13 @@ func TestBalancer_HealthChecking(t *testing.T) {
 
 	conns := pool.SnapshotConns()
 	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	require.NotNil(t, conn1)
 	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	require.NotNil(t, conn2)
 	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	require.NotNil(t, conn3)
 	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	require.NotNil(t, conn4)
 	checker.UpdateHealthState(conn1, health.StateHealthy)
 	// Now that conn1 is both warm and healthy, we are warmed up. We still include the
 	// connections in unknown state because the threshold is 3 conns or 25%, whichever is greater.
@@ -377,23 +505,24 @@ func TestBalancer_HealthChecking(t *testing.T) {
 		{HostPort: "1.2.3.20"},
 	}
 	awaitPickerUpdate(t, pool, true, expectAddrs, []int{1, 2, 7})
-
-	err := balancer.Close()
-	require.NoError(t, err)
-	checkers := checker.SnapshotConns()
-	require.Empty(t, checkers)
 }
 
-func TestDefaultBalancer_Reresolve(t *testing.T) {
+func TestBalancer_Reresolve(t *testing.T) {
 	t.Parallel()
 	checker := balancertesting.NewFakeHealthChecker()
 	clock := clocktest.NewFakeClock()
 	pool := balancertesting.NewFakeConnPool()
 
-	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool)
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool, 0)
 	balancer.updateHook = balancertesting.DeterministicReconciler
 	balancer.clock = clock
 	balancer.start()
+	t.Cleanup(func() {
+		err := balancer.Close()
+		require.NoError(t, err)
+		checkers := checker.SnapshotConns()
+		require.Empty(t, checkers)
+	})
 
 	checker.SetInitialState(health.StateUnknown)
 
@@ -408,9 +537,13 @@ func TestDefaultBalancer_Reresolve(t *testing.T) {
 	awaitPickerUpdate(t, pool, false, addrs, []int{1, 2, 3, 4})
 	conns := pool.SnapshotConns()
 	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	require.NotNil(t, conn1)
 	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	require.NotNil(t, conn2)
 	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	require.NotNil(t, conn3)
 	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	require.NotNil(t, conn4)
 	checker.UpdateHealthState(conn1, health.StateUnhealthy)
 	checker.UpdateHealthState(conn2, health.StateUnhealthy)
 	awaitResolveNow(t, pool, 1)
@@ -418,11 +551,55 @@ func TestDefaultBalancer_Reresolve(t *testing.T) {
 	clock.Advance(10 * time.Second)
 	checker.UpdateHealthState(conn4, health.StateUnhealthy)
 	awaitResolveNow(t, pool, 2)
+}
 
-	err := balancer.Close()
-	require.NoError(t, err)
-	checkers := checker.SnapshotConns()
-	require.Empty(t, checkers)
+func TestBalancer_RoundTripperMaxLifetime(t *testing.T) {
+	t.Parallel()
+	clock := clocktest.NewFakeClock()
+	pool := balancertesting.NewFakeConnPool()
+
+	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, health.NopChecker, pool, time.Second)
+	balancer.updateHook = balancertesting.DeterministicReconciler
+	balancer.clock = clock
+	balancer.start()
+	t.Cleanup(func() {
+		err := balancer.Close()
+		require.NoError(t, err)
+	})
+
+	// Initial resolve
+	addrs := []resolver.Address{
+		{HostPort: "1.2.3.1"},
+		{HostPort: "1.2.3.2"},
+		{HostPort: "1.2.3.3"},
+		{HostPort: "1.2.3.4"},
+	}
+	balancer.OnResolve(addrs)
+	awaitPickerUpdate(t, pool, true, addrs, []int{1, 2, 3, 4})
+	conns := pool.SnapshotConns()
+	conn1 := balancertesting.FindConn(conns, addrs[0], 1)
+	require.NotNil(t, conn1)
+	conn2 := balancertesting.FindConn(conns, addrs[1], 2)
+	require.NotNil(t, conn2)
+	conn3 := balancertesting.FindConn(conns, addrs[2], 3)
+	require.NotNil(t, conn3)
+	conn4 := balancertesting.FindConn(conns, addrs[3], 4)
+	require.NotNil(t, conn4)
+
+	// After one second, lifetime limit is reached and all of these get recycled.
+	clock.Advance(time.Second)
+	// We can await the indices to be updated. But we won't know the precise
+	// address associated with each index because they are updated from
+	// independent timer goroutines.
+	conns = awaitConnIndices(t, pool, []int{5, 6, 7, 8})
+	gotAddrs := make([]resolver.Address, 0, len(conns))
+	for cn := range conns {
+		gotAddrs = append(gotAddrs, cn.Address())
+	}
+	sort.Slice(gotAddrs, func(i, j int) bool {
+		return gotAddrs[i].HostPort < gotAddrs[j].HostPort
+	})
+	require.Equal(t, addrs, gotAddrs)
 }
 
 func awaitPickerUpdate(t *testing.T, pool *balancertesting.FakeConnPool, warm bool, addrs []resolver.Address, indexes []int) {
@@ -460,6 +637,28 @@ func awaitConns(t *testing.T, pool *balancertesting.FakeConnPool, addrs []resolv
 		got = connStatesFromSnapshot(snapshot)
 		if reflect.DeepEqual(want, got) {
 			return
+		}
+	}
+}
+
+func awaitConnIndices(t *testing.T, pool *balancertesting.FakeConnPool, indexes []int) conns.Set {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var gotIndexes []int
+	for {
+		snapshot, err := pool.AwaitConnUpdate(ctx)
+		if err != nil {
+			require.NotNil(t, gotIndexes, "didn't get connection update after 1 second")
+			require.FailNow(t, "didn't get expected active connections after 1 second", "want %+v\ngot %+v", indexes, gotIndexes)
+		}
+		gotIndexes = make([]int, 0, len(snapshot))
+		for cn := range snapshot {
+			gotIndexes = append(gotIndexes, cn.(*balancertesting.FakeConn).Index)
+		}
+		sort.Ints(gotIndexes)
+		if reflect.DeepEqual(indexes, gotIndexes) {
+			return snapshot
 		}
 	}
 }
