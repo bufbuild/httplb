@@ -19,7 +19,7 @@ import (
 	"io"
 )
 
-// MinAddresses decorates the given resolver so it sends a set of addresses that has at
+// MinConnections decorates the given resolver so it sends a set of addresses that has at
 // least as many entries as the given minimum. If the given resolver provides a smaller
 // set of addresses, it replicates those addresses until the give minimum is reached.
 //
@@ -33,25 +33,25 @@ import (
 // always fully replicates the set. So it will always report at least minAddresses, but
 // could report nearly twice as many: in the case where the set from the underlying
 // resolver has minAddresses-1 entries, this will provide (minAddresses-1)*2 entries.
-func MinAddresses(other Resolver, minAddresses int) Resolver {
-	return &minAddrsResolver{res: other, min: minAddresses}
+func MinConnections(other Resolver, minAddresses int) Resolver {
+	return &minConnsResolver{res: other, min: minAddresses}
 }
 
-type minAddrsResolver struct {
+type minConnsResolver struct {
 	res Resolver
 	min int
 }
 
-func (m *minAddrsResolver) New(ctx context.Context, scheme, hostPort string, receiver Receiver, refresh <-chan struct{}) io.Closer {
-	return m.res.New(ctx, scheme, hostPort, &minAddrsReceiver{rcvr: receiver, min: m.min}, refresh)
+func (m *minConnsResolver) New(ctx context.Context, scheme, hostPort string, receiver Receiver, refresh <-chan struct{}) io.Closer {
+	return m.res.New(ctx, scheme, hostPort, &minConnsReceiver{rcvr: receiver, min: m.min}, refresh)
 }
 
-type minAddrsReceiver struct {
+type minConnsReceiver struct {
 	rcvr Receiver
 	min  int
 }
 
-func (m *minAddrsReceiver) OnResolve(addresses []Address) {
+func (m *minConnsReceiver) OnResolve(addresses []Address) {
 	if len(addresses) >= m.min || len(addresses) == 0 {
 		// Already enough addresses; OR zero addresses, in which case, no amount of replication can help.
 		m.rcvr.OnResolve(addresses)
@@ -68,6 +68,6 @@ func (m *minAddrsReceiver) OnResolve(addresses []Address) {
 	m.rcvr.OnResolve(scaledAddrs)
 }
 
-func (m *minAddrsReceiver) OnResolveError(err error) {
+func (m *minConnsReceiver) OnResolveError(err error) {
 	m.rcvr.OnResolveError(err)
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMinAddresses(t *testing.T) {
+func TestMinConnections(t *testing.T) {
 	t.Parallel()
 
 	refreshCh := make(chan struct{})
@@ -35,7 +35,7 @@ func TestMinAddresses(t *testing.T) {
 	addresses := []Address{addrFoo, addrBar, addrBaz, addrQux}
 
 	var resolver fakeResolver
-	minResolver := MinAddresses(&resolver, 6)
+	minResolver := MinConnections(&resolver, 6)
 	var receiver fakeReceiver
 	_ = minResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
@@ -57,7 +57,7 @@ func TestMinAddresses(t *testing.T) {
 		addrFoo, addrBar, addrBaz, addrQux, addrFoo, addrBar, addrBaz, addrQux,
 	})
 
-	minResolver = MinAddresses(&resolver, 3)
+	minResolver = MinConnections(&resolver, 3)
 	_ = minResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
 	resolver.receiver.OnResolve(append([]Address{}, addresses...))
