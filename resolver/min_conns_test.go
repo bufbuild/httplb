@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/bufbuild/httplb/resolver" //nolint:revive
+	. "github.com/bufbuild/httplb/resolver" //nolint:revive // use dot import for tests
 	"github.com/stretchr/testify/assert"
 )
 
