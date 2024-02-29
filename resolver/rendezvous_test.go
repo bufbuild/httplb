@@ -19,7 +19,7 @@ import (
 	"io"
 	"testing"
 
-	. "github.com/bufbuild/httplb/resolver" //nolint:revive // use dot import for tests
+	. "github.com/bufbuild/httplb/resolver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

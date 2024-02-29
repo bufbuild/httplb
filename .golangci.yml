@@ -64,6 +64,11 @@ issues:
     - path: (.+)_test\.go
       linters:
         - forcetypeassert
+    # Allow dot imports for testing.
+    - path: (.+)_test\.go
+      text: "^dot-imports: should not use dot imports"
+      linters:
+        - revive
     # Allow clocktest within tests
     - path: (.+)_test\.go
       text: "^use of `clocktest\\."
