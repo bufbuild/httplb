@@ -133,11 +133,32 @@ func WithRootContext(ctx context.Context) ClientOption {
 // If zero or no WithIdleTransportTimeout option is used, a default of
 // 15 minutes will be used.
 //
-// To prevent some transports from being closed due to being idle, use
-// WithKeepWarmTargets.
+// To prevent transports from being closed due to being idle, set an
+// arbitrarily large timeout (i.e. math.MaxInt64) or use WithAllowBackendTarget.
 func WithIdleTransportTimeout(duration time.Duration) ClientOption {
 	return clientOptionFunc(func(opts *clientOptions) {
 		opts.idleTransportTimeout = duration
+	})
+}
+
+// WithRoundTripperMaxLifetime configures a limit for how long a single
+// round tripper (or "leaf" transport) will be used. If no option is given,
+// round trippers are retained indefinitely, until their parent transport
+// is closed (which can happen if the transport is idle; see
+// WithIdleTransportTimeout). When a round tripper reaches its maximum
+// lifetime, a new one is first created to replace it. Any in-progress
+// operations are allowed to finish, but no new operations will use it.
+//
+// This function is mainly useful when the target host is a layer-4 proxy.
+// In this situation, it is possible for multiple round trippers to all
+// get connected to the same backend host, resulting in poor load
+// distribution. With a lifetime limit, a single round tripper will get
+// "recycled", and its replacement is likely to be connected to a
+// different backend host. So when a transport gets into a scenario where
+// it has poor backend diversity, the lifetime limit allows it to self-heal.
+func WithRoundTripperMaxLifetime(duration time.Duration) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.roundTripperMaxLifetime = duration
 	})
 }
 
@@ -354,6 +375,7 @@ func (f clientOptionFunc) applyToClient(opts *clientOptions) {
 type clientOptions struct {
 	rootCtx                 context.Context //nolint:containedctx
 	idleTransportTimeout    time.Duration
+	roundTripperMaxLifetime time.Duration
 	schemes                 map[string]Transport
 	redirectFunc            func(req *http.Request, via []*http.Request) error
 	allowedTarget           *target

@@ -343,6 +343,7 @@ func (m *mainTransport) getOrCreatePool(dest target) (*transportPool, error) {
 		m.clientOptions.resolver,
 		m.clientOptions.newPicker,
 		m.clientOptions.healthChecker,
+		m.clientOptions.roundTripperMaxLifetime,
 		dest,
 		applyTimeout,
 		schemeConf,
@@ -488,6 +489,7 @@ func newTransportPool(
 	res resolver.Resolver,
 	newPicker func(prev picker.Picker, allConns conn.Conns) picker.Picker,
 	checker health.Checker,
+	roundTripperMaxLifetime time.Duration,
 	dest target,
 	applyTimeout func(ctx context.Context) (context.Context, context.CancelFunc),
 	transport Transport,
@@ -507,7 +509,7 @@ func newTransportPool(
 		onClose:             onClose,
 	}
 	pool.warmCond = sync.NewCond(&pool.mu)
-	pool.balancer = newBalancer(ctx, newPicker, checker, pool)
+	pool.balancer = newBalancer(ctx, newPicker, checker, pool, roundTripperMaxLifetime)
 	pool.resolver = res.New(ctx, dest.scheme, dest.hostPort, pool.balancer, reresolve)
 	pool.balancer.start()
 	return pool
