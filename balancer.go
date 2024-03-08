@@ -228,6 +228,16 @@ func (b *balancer) receiveAddrs(ctx context.Context) {
 			b.connsToRecycle = nil
 			b.mu.Unlock()
 			if len(connsToRecycle) > 0 {
+				// TODO: In practice, this will often recycle all connections at the same time
+				//       since they are often created at the same time (when we get results
+				//       from the resolver) and they all have the same max lifetime.
+				//       This should be fine in vast majority of cases, but it would pose
+				//       resource-usage issues if, for example, there were 1000s of TLS
+				//       connections (or even 100s of TLS connections that use client certs and
+				//       a computationally expensive private key algorithm like RSA). We might
+				//       consider rate-limiting here the rate at which we recycle connections,
+				//       allowing connections to live a little beyond their max lifetime just
+				//       so we don't recycle everything all at once.
 				b.connManager.recycleConns(connsToRecycle)
 			}
 
@@ -522,6 +532,7 @@ func (c *connManager) recycleConns(connsToRecycle []conn.Conn) {
 				found = true
 				// remove cn from the slice
 				copy(existing[i:], existing[i+1:])
+				existing[len(existing)-1] = nil // don't leak memory
 				c.connsByAddr[addr] = existing[:len(existing)-1]
 				break
 			}
@@ -533,6 +544,8 @@ func (c *connManager) recycleConns(connsToRecycle []conn.Conn) {
 		}
 	}
 	if needToCompact {
+		// TODO: when we can rely on Go 1.21, we should change this
+		//       to use new std-lib function slices.DeleteFunc
 		i := 0
 		for _, cn := range connsToRecycle {
 			if cn != nil {
