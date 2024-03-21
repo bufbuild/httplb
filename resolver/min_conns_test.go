@@ -40,28 +40,28 @@ func TestMinConnections(t *testing.T) {
 	_ = minResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
 	resolver.receiver.OnResolve([]Address{})
-	assert.Equal(t, receiver.addrs, []Address{})
+	assert.Empty(t, receiver.addrs)
 
 	resolver.receiver.OnResolve([]Address{addrFoo})
-	assert.Equal(t, receiver.addrs, []Address{ // single address, repeated 6 times
+	assert.Equal(t, []Address{ // single address, repeated 6 times
 		addrFoo, addrFoo, addrFoo, addrFoo, addrFoo, addrFoo,
-	})
+	}, receiver.addrs)
 
 	resolver.receiver.OnResolve([]Address{addrFoo, addrBar})
-	assert.Equal(t, receiver.addrs, []Address{ // both addresses, each repeated 3 times
+	assert.Equal(t, []Address{ // both addresses, each repeated 3 times
 		addrFoo, addrBar, addrFoo, addrBar, addrFoo, addrBar,
-	})
+	}, receiver.addrs)
 
 	resolver.receiver.OnResolve(append([]Address{}, addresses...))
-	assert.Equal(t, receiver.addrs, []Address{ // all four addresses, each repeated
+	assert.Equal(t, []Address{ // all four addresses, each repeated
 		addrFoo, addrBar, addrBaz, addrQux, addrFoo, addrBar, addrBaz, addrQux,
-	})
+	}, receiver.addrs)
 
 	minResolver = MinConnections(&resolver, 3)
 	_ = minResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
 	resolver.receiver.OnResolve(append([]Address{}, addresses...))
-	assert.Equal(t, receiver.addrs, []Address{ // all four addresses, no repetition
+	assert.Equal(t, []Address{ // all four addresses, no repetition
 		addrFoo, addrBar, addrBaz, addrQux,
-	})
+	}, receiver.addrs)
 }

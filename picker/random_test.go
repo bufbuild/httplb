@@ -21,6 +21,7 @@ import (
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type dummyConns struct{ conns []conn.Conn }
@@ -33,6 +34,6 @@ func TestRandomPicker(t *testing.T) {
 
 	dummyConn := conn.Conn(nil)
 	conn, _, err := picker.NewRandom(nil, dummyConns{[]conn.Conn{dummyConn}}).Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, conn)
 }
