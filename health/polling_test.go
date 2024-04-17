@@ -87,7 +87,7 @@ func TestPollingCheckerThresholds(t *testing.T) {
 		select {
 		case connection <- response:
 			err := testClock.BlockUntilContext(ctx, 1)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			testClock.Advance(interval)
 		case <-tracker:
 			t.Fatal("unexpected health state update")

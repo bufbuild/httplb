@@ -38,7 +38,7 @@ func TestRendezvous(t *testing.T) {
 
 	var resolver fakeResolver
 	_, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{})
-	assert.ErrorContains(t, err, "NumBackends must be set")
+	require.ErrorContains(t, err, "NumBackends must be set")
 
 	subsetterResolver, err := RendezvousHashSubsetter(&resolver, RendezvousConfig{
 		NumBackends:  2,
@@ -49,10 +49,10 @@ func TestRendezvous(t *testing.T) {
 	_ = subsetterResolver.New(context.Background(), "", "", &receiver, refreshCh)
 
 	resolver.receiver.OnResolve([]Address{addrFoo})
-	assert.Equal(t, receiver.addrs, []Address{addrFoo})
+	assert.Equal(t, []Address{addrFoo}, receiver.addrs)
 
 	resolver.receiver.OnResolve([]Address{addrFoo, addrBar})
-	assert.Equal(t, receiver.addrs, []Address{addrFoo, addrBar})
+	assert.Equal(t, []Address{addrFoo, addrBar}, receiver.addrs)
 
 	resolver.receiver.OnResolve(append([]Address{}, addresses...))
 	set1 := receiver.addrs

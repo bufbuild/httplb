@@ -21,6 +21,7 @@ import (
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLeastLoadedRoundRobinPicker(t *testing.T) {
@@ -32,14 +33,14 @@ func TestLeastLoadedRoundRobinPicker(t *testing.T) {
 	dummyConn := conn.Conn(nil)
 	pick := picker.NewLeastLoadedRoundRobin(nil, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err := pick.Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 
 	// TODO: test (whitebox?) that state is retained between pickers
 
 	pick = picker.NewLeastLoadedRoundRobin(pick, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err = pick.Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 }
 
@@ -51,13 +52,13 @@ func TestLeastLoadedRandomPicker(t *testing.T) {
 	dummyConn := conn.Conn(nil)
 	pick := picker.NewLeastLoadedRandom(nil, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err := pick.Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 
 	// TODO: test (whitebox?) that state is retained between pickers
 
 	pick = picker.NewLeastLoadedRandom(pick, dummyConns{[]conn.Conn{dummyConn}})
 	connection, _, err = pick.Pick(&http.Request{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dummyConn, connection)
 }
