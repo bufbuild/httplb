@@ -86,23 +86,20 @@ type leastLoadedConnHeap []*leastLoadedConnItem
 type leastLoadedConnItem struct {
 	conn     conn.Conn
 	load     uint64
-	tiebreak uint64
+	tieBreak uint64
 	index    int
 }
 
 // +checklocks:p.mu
 func (p *leastLoadedBase) pickLocked(nextTieBreak uint64) (conn conn.Conn, whenDone func(), _ error) { //nolint:unparam
-	entry := p.conns.acquire()
-	entry.tiebreak = nextTieBreak
-
-	whenDone = func() {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-
-		p.conns.release(entry)
-	}
-
-	return entry.conn, whenDone, nil
+	entry := p.conns.acquire(nextTieBreak)
+	return entry.conn,
+		func() {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.conns.release(entry)
+		},
+		nil
 }
 
 func (p *leastLoadedRoundRobin) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
@@ -138,24 +135,46 @@ func (h *leastLoadedConnHeap) update(allConns conn.Conns) {
 	for i, l := 0, allConns.Len(); i < l; i++ {
 		newMap[allConns.Get(i)] = struct{}{}
 	}
-
-	for i, l := 0, len(*h); i < l; i++ {
-		item := (*h)[i]
+	j := 0
+	slice := *h
+	// Remove items from slice that aren't in the new set of conns,
+	// compacting the slice as we go.
+	for i, item := range slice {
 		if _, ok := newMap[item.conn]; ok {
 			delete(newMap, item.conn)
+			if i != j {
+				item.index = j
+				(*h)[j] = item
+			}
+			j++
 		} else {
-			heap.Remove(h, item.index)
+			// If there are pending ops with this one, make sure it
+			// knows it's been evicted.
+			item.index = -1
 		}
 	}
-
-	for conn := range newMap {
-		heap.Push(h, &leastLoadedConnItem{conn: conn})
+	newLen := j + len(newMap)
+	if len(slice) > newLen {
+		// Make sure we don't leak memory with dangling pointers
+		// in unused regions of the slice.
+		for i := range slice[newLen:] {
+			slice[newLen+i] = nil
+		}
 	}
+	// Now add remaining new connections.
+	slice = slice[:j]
+	for cn := range newMap {
+		slice = append(slice, &leastLoadedConnItem{conn: cn, index: len(slice)})
+	}
+	*h = slice
+	// Re-heapify
+	heap.Init(h)
 }
 
-func (h *leastLoadedConnHeap) acquire() *leastLoadedConnItem {
+func (h *leastLoadedConnHeap) acquire(nextTieBreak uint64) *leastLoadedConnItem {
 	entry := (*h)[0]
 	entry.load++
+	entry.tieBreak = nextTieBreak
 	heap.Fix(h, entry.index)
 	return entry
 }
@@ -171,7 +190,7 @@ func (h leastLoadedConnHeap) Len() int { return len(h) }
 
 func (h leastLoadedConnHeap) Less(i, j int) bool {
 	if h[i].load == h[j].load {
-		return h[i].tiebreak < h[j].tiebreak
+		return h[i].tieBreak < h[j].tieBreak
 	}
 	return h[i].load < h[j].load
 }
