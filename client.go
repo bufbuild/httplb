@@ -235,10 +235,9 @@ func WithHealthChecks(checker health.Checker) ClientOption {
 // The given proxyFunc returns the URL of a proxy server to use for the
 // given HTTP request. If no proxy should be used, it should return nil, nil.
 // If an error is returned, the request fails immediately with that error.
-// If a nil proxyFunc is provided, no proxy will ever be used. This can be
-// useful to disable proxies. If this function is set to nil or no
-// WithProxy option is provided, [http.ProxyFromEnvironment] will be used
-// as the proxyFunc. (Also see WithNoProxy.)
+// If this function is set to nil or no WithProxy option is provided,
+// [http.ProxyFromEnvironment] will be used as the proxyFunc. (Also see
+// WithNoProxy.)
 //
 // The given onProxyConnectFunc, if non-nil, provides a way to examine the
 // response from the proxy for a CONNECT request. If the onProxyConnectFunc
