@@ -121,7 +121,7 @@ func verifyPicks(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint
 	for _, ch := range ids {
 		id := string(ch)
 		item := heap.acquire(0)
-		require.Equal(t, id, connId(item.conn))
+		require.Equal(t, id, connID(item.conn))
 		counts[id]++
 		verifyHeap(t, heap, counts)
 	}
@@ -137,9 +137,10 @@ func verifyReleases(t *testing.T, heap *leastLoadedConnHeap, counts map[string]u
 	}
 }
 
-func release(t *testing.T, heap *leastLoadedConnHeap, id string) {
+func release(t *testing.T, heap *leastLoadedConnHeap, id string) { //nolint:varnamelen
+	t.Helper()
 	for _, item := range *heap {
-		if connId(item.conn) == id {
+		if connID(item.conn) == id {
 			heap.release(item)
 			return
 		}
@@ -150,7 +151,7 @@ func release(t *testing.T, heap *leastLoadedConnHeap, id string) {
 func snapshotHeap(heap *leastLoadedConnHeap) map[string]*leastLoadedConnItem {
 	snapshot := make(map[string]*leastLoadedConnItem, len(*heap))
 	for _, item := range *heap {
-		snapshot[connId(item.conn)] = item
+		snapshot[connID(item.conn)] = item
 	}
 	return snapshot
 }
@@ -159,7 +160,7 @@ func verifyHeap(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint6
 	t.Helper()
 	for i, item := range *heap {
 		require.Equal(t, i, item.index)
-		count, ok := counts[connId(item.conn)]
+		count, ok := counts[connID(item.conn)]
 		require.True(t, ok)
 		require.Equal(t, count, item.load)
 		if i > 0 {
@@ -181,6 +182,6 @@ type dummyConn struct {
 	id string
 }
 
-func connId(cn conn.Conn) string {
+func connID(cn conn.Conn) string {
 	return cn.(dummyConn).id
 }

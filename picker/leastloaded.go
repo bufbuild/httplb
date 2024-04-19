@@ -135,7 +135,7 @@ func (h *leastLoadedConnHeap) update(allConns conn.Conns) {
 	for i, l := 0, allConns.Len(); i < l; i++ {
 		newMap[allConns.Get(i)] = struct{}{}
 	}
-	j := 0
+	j := 0 //nolint:varnamelen
 	slice := *h
 	// Remove items from slice that aren't in the new set of conns,
 	// compacting the slice as we go.
