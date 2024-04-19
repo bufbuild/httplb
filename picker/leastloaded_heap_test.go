@@ -128,6 +128,42 @@ func TestLeastLoadedConnHeap(t *testing.T) {
 		"l": 0,
 	}
 	verifyHeap(t, heap, counts)
+
+	// Update with small number of new items. This will go
+	// the simple heap.Push route instead of append+re-init.
+	heap.update(conns.FromSlice([]conn.Conn{
+		dummyConn{id: "a"},
+		dummyConn{id: "b"},
+		dummyConn{id: "c"},
+		dummyConn{id: "d"},
+		dummyConn{id: "e"},
+		dummyConn{id: "f"},
+		dummyConn{id: "g"},
+		dummyConn{id: "h"},
+		dummyConn{id: "i"},
+		dummyConn{id: "j"},
+		dummyConn{id: "k"},
+		dummyConn{id: "l"},
+		dummyConn{id: "m"},
+		dummyConn{id: "n"},
+	}))
+	counts = map[string]uint64{
+		"a": 0,
+		"b": 0,
+		"c": 0,
+		"d": 0,
+		"e": 3,
+		"f": 3,
+		"g": 3,
+		"h": 3,
+		"i": 0,
+		"j": 0,
+		"k": 0,
+		"l": 0,
+		"m": 0,
+		"n": 0,
+	}
+	verifyHeap(t, heap, counts)
 }
 
 func verifyPicks(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint64, ids string) {
