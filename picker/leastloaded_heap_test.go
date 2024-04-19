@@ -15,6 +15,7 @@
 package picker
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/bufbuild/httplb/conn"
@@ -42,22 +43,18 @@ func TestLeastLoadedConnHeap(t *testing.T) {
 	}
 	verifyHeap(t, heap, counts)
 
-	// Note: order may not be intuitive, due to how
-	// nodes in the heap are sifted up and down as an item
-	// is popped, but it is deterministic.
-
 	// No repeats since they all have weight zero.
-	verifyPicks(t, heap, counts, "abdecf")
+	verifyPicks(t, heap, counts, "abcdef")
 	// Now they all have weight one, so they all repeat. But
 	// we don't see any item a third time until we've seen
 	// all of 'em 2x.
-	verifyPicks(t, heap, counts, "fdabce")
+	verifyPicks(t, heap, counts, "abcdef")
 
 	verifyReleases(t, heap, counts, "aabb")
 
 	// Now a and b have a load of zero, but the others have load 2.
 	// So we'll pick them next.
-	verifyPicks(t, heap, counts, "abba")
+	verifyPicks(t, heap, counts, "aabb")
 
 	snapshot := snapshotHeap(heap)
 	// Update state with new connections. We should forget
@@ -84,10 +81,10 @@ func TestLeastLoadedConnHeap(t *testing.T) {
 	verifyHeap(t, heap, counts)
 
 	// g and h have less load, so we favor them.
-	verifyPicks(t, heap, counts, "hggh")
+	verifyPicks(t, heap, counts, "gghh")
 	// Now everything has load == 2. So next four picks sees
 	// each of the four items.
-	verifyPicks(t, heap, counts, "hefg")
+	verifyPicks(t, heap, counts, "efgh")
 
 	// No-op update
 	heap.update(conns.FromSlice([]conn.Conn{
@@ -168,13 +165,25 @@ func TestLeastLoadedConnHeap(t *testing.T) {
 
 func verifyPicks(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint64, ids string) {
 	t.Helper()
-	for _, ch := range ids {
-		id := string(ch)
+	expected := make([]string, len(ids))
+	actuals := make([]string, len(ids))
+	for i, ch := range ids {
+		expectedID := string(ch)
 		item := heap.acquire(0)
-		require.Equal(t, id, connID(item.conn))
-		counts[id]++
+		actualID := connID(item.conn)
+		expected[i] = expectedID
+		actuals[i] = actualID
+		counts[actualID]++
 		verifyHeap(t, heap, counts)
 	}
+	// Order can be non-intuitive, due to internal state of the heap, how
+	// it models a binary tree inside the slice, and the details of sifting
+	// things up and down the tree when state changes. So we just sort the
+	// expected and actuals: the identities of which connections were
+	// picked is more important than the order of picking.
+	sort.Strings(expected)
+	sort.Strings(actuals)
+	require.Equal(t, expected, actuals)
 }
 
 func verifyReleases(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint64, ids string) {
