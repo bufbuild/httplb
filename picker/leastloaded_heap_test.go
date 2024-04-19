@@ -165,13 +165,14 @@ func TestLeastLoadedConnHeap(t *testing.T) {
 
 func verifyPicks(t *testing.T, heap *leastLoadedConnHeap, counts map[string]uint64, ids string) {
 	t.Helper()
-	var expected, actuals []string
-	for _, ch := range ids {
+	expected := make([]string, len(ids))
+	actuals := make([]string, len(ids))
+	for i, ch := range ids {
 		expectedID := string(ch)
 		item := heap.acquire(0)
 		actualID := connID(item.conn)
-		expected = append(expected, expectedID)
-		actuals = append(actuals, actualID)
+		expected[i] = expectedID
+		actuals[i] = actualID
 		counts[actualID]++
 		verifyHeap(t, heap, counts)
 	}
