@@ -16,6 +16,7 @@ package picker
 
 import (
 	"container/heap"
+	"math/bits"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -154,7 +155,21 @@ func (h *leastLoadedConnHeap) update(allConns conn.Conns) {
 		}
 	}
 	newLen := j + len(newMap)
-	if len(slice) > newLen {
+	if j == len(slice) {
+		// No items removed, so we haven't broken any heap invariants.
+		// If we don't have too many items to add, just heap.Push them
+		// and return.
+		threshold := newLen / bits.Len(uint(newLen))
+		// Push is O(log n). Init (aka heapify) is O(n). So threshold
+		// is (n / log n). If there are more items than that, it's
+		// better to fall through below and re-init.
+		if len(newMap) <= threshold {
+			for cn := range newMap {
+				h.Push(&leastLoadedConnItem{conn: cn})
+			}
+			return
+		}
+	} else if len(slice) > newLen {
 		// Make sure we don't leak memory with dangling pointers
 		// in unused regions of the slice.
 		for i := range slice[newLen:] {
