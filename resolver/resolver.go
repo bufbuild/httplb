@@ -24,6 +24,27 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
+// AddressFamilyAffinity is an option that allows control over the preference
+// for which addresses to consider when resolving, based on their address
+// family.
+type AddressFamilyAffinity int
+
+const (
+	// AllFamilies will result in all addresses being used, regardless of
+	// their address family.
+	AllFamilies AddressFamilyAffinity = iota
+
+	// PreferIPv4 will result in only IPv4 addresses being used, if any
+	// IPv4 addresses are present. If no IPv4 addresses are resolved, then
+	// all addresses will be used.
+	PreferIPv4
+
+	// PreferIPv6 will result in only IPv6 addresses being used, if any
+	// IPv6 addresses are present. If no IPv6 addresses are resolved, then
+	// all addresses will be used.
+	PreferIPv6
+)
+
 // Resolver is an interface for continuous name resolution.
 type Resolver interface {
 	// New creates a continuous resolver task for the given target name. When
@@ -107,16 +128,20 @@ type Address struct {
 // parameter, and the resolver will return only IP addresses of the type
 // specified by network. The network must be one of "ip", "ip4" or "ip6".
 // Note that because net.Resolver does not expose the record TTL values, this
-// resolver uses the fixed TTL provided in the ttl parameter.
+// resolver uses the fixed TTL provided in the ttl parameter. The specified
+// address family affinity value can be used to prefer using either IPv4 or
+// IPv6 addresses only, in cases where there are both A and AAAA records.
 func NewDNSResolver(
 	resolver *net.Resolver,
 	network string,
 	ttl time.Duration,
+	affinity AddressFamilyAffinity,
 ) Resolver {
 	return NewPollingResolver(
 		&dnsResolveProber{
 			resolver: resolver,
 			network:  network,
+			affinity: affinity,
 		},
 		ttl,
 	)
@@ -139,6 +164,7 @@ func NewPollingResolver(
 type dnsResolveProber struct {
 	resolver *net.Resolver
 	network  string
+	affinity AddressFamilyAffinity
 }
 
 func (r *dnsResolveProber) ResolveOnce(
@@ -160,6 +186,30 @@ func (r *dnsResolveProber) ResolveOnce(
 	addresses, err := r.resolver.LookupNetIP(ctx, r.network, host)
 	if err != nil {
 		return nil, 0, err
+	}
+	switch r.affinity {
+	case AllFamilies:
+		break
+	case PreferIPv4:
+		ip4Addresses := addresses[:0]
+		for _, address := range addresses {
+			if address.Is4() || address.Is4In6() {
+				ip4Addresses = append(ip4Addresses, address)
+			}
+		}
+		if len(ip4Addresses) > 0 {
+			addresses = ip4Addresses
+		}
+	case PreferIPv6:
+		ip6Addresses := addresses[:0]
+		for _, address := range addresses {
+			if address.Is6() {
+				ip6Addresses = append(ip6Addresses, address)
+			}
+		}
+		if len(ip6Addresses) > 0 {
+			addresses = ip6Addresses
+		}
 	}
 	result := make([]Address, len(addresses))
 	for i, address := range addresses {
