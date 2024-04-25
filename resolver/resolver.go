@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/bufbuild/httplb/attribute"
@@ -187,30 +188,7 @@ func (r *dnsResolveProber) ResolveOnce(
 	if err != nil {
 		return nil, 0, err
 	}
-	switch r.affinity {
-	case AllFamilies:
-		break
-	case PreferIPv4:
-		ip4Addresses := addresses[:0]
-		for _, address := range addresses {
-			if address.Is4() || address.Is4In6() {
-				ip4Addresses = append(ip4Addresses, address)
-			}
-		}
-		if len(ip4Addresses) > 0 {
-			addresses = ip4Addresses
-		}
-	case PreferIPv6:
-		ip6Addresses := addresses[:0]
-		for _, address := range addresses {
-			if address.Is6() {
-				ip6Addresses = append(ip6Addresses, address)
-			}
-		}
-		if len(ip6Addresses) > 0 {
-			addresses = ip6Addresses
-		}
-	}
+	addresses = applyAddressFamilyAffinity(addresses, r.affinity)
 	result := make([]Address, len(addresses))
 	for i, address := range addresses {
 		result[i].HostPort = net.JoinHostPort(address.Unmap().String(), port)
@@ -297,4 +275,32 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 			// Continue.
 		}
 	}
+}
+
+func applyAddressFamilyAffinity(addresses []netip.Addr, affinity AddressFamilyAffinity) []netip.Addr {
+	switch affinity {
+	case AllFamilies:
+		break
+	case PreferIPv4:
+		ip4Addresses := addresses[:0]
+		for _, address := range addresses {
+			if address.Is4() || address.Is4In6() {
+				ip4Addresses = append(ip4Addresses, address)
+			}
+		}
+		if len(ip4Addresses) > 0 {
+			addresses = ip4Addresses
+		}
+	case PreferIPv6:
+		ip6Addresses := addresses[:0]
+		for _, address := range addresses {
+			if address.Is6() {
+				ip6Addresses = append(ip6Addresses, address)
+			}
+		}
+		if len(ip6Addresses) > 0 {
+			addresses = ip6Addresses
+		}
+	}
+	return addresses
 }
