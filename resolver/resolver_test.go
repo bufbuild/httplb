@@ -88,7 +88,7 @@ func TestResolverTTL(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestAddressFamilyAffinity(t *testing.T) {
+func TestAddressFamilyPolicy(t *testing.T) {
 	t.Parallel()
 
 	ip4Header := dnsmessage.ResourceHeader{
@@ -130,15 +130,15 @@ func TestAddressFamilyAffinity(t *testing.T) {
 		ip6Address2Resource,
 	})
 	resolver := NewDNSResolver(mixedDNSResolver, PreferIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 	resolver = NewDNSResolver(mixedDNSResolver, PreferIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 	resolver = NewDNSResolver(mixedDNSResolver, UseBothIPv4AndIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2, ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2, ip6Address1, ip6Address2})
 
 	// A records only
 	ip4DNSResolver := newFakeDNSResolver(t, []dnsmessage.Resource{
@@ -146,15 +146,15 @@ func TestAddressFamilyAffinity(t *testing.T) {
 		ip4Address2Resource,
 	})
 	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{})
 	resolver = NewDNSResolver(ip4DNSResolver, UseBothIPv4AndIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 
 	// AAAA records only
 	ip6DNSResolver := newFakeDNSResolver(t, []dnsmessage.Resource{
@@ -162,20 +162,30 @@ func TestAddressFamilyAffinity(t *testing.T) {
 		ip6Address2Resource,
 	})
 	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv4, 1)
-	testResolveAddresses(t, resolver, []net.IP{})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{})
 	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 	resolver = NewDNSResolver(ip6DNSResolver, UseBothIPv4AndIPv6, 1)
-	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
+
+	// IPv4 embedded in IPv6
+	// This is needed because Go will do this for all IPv4 addresses that
+	// are passed into the resolver. Even if Go's behavior changes, we
+	// should behave consistently in the face of this quirk.
+	resolver = NewDNSResolver(net.DefaultResolver, RequireIPv4, 1)
+	loopback := net.ParseIP("127.0.0.1")
+	testResolveAddresses(t, resolver, "127.0.0.1", []net.IP{loopback})
+	testResolveAddresses(t, resolver, "::ffff:127.0.0.1", []net.IP{loopback})
 }
 
 func testResolveAddresses(
 	t *testing.T,
 	resolver Resolver,
+	target string,
 	expectedAddresses []net.IP,
 ) {
 	t.Helper()
@@ -188,7 +198,7 @@ func testResolveAddresses(
 	resolver.(*pollingResolver).clock = testClock
 
 	resolved := make(chan []Address)
-	task := resolver.New(ctx, "http", "example.com", testReceiver{
+	task := resolver.New(ctx, "http", target, testReceiver{
 		onResolve: func(resolvedAddresses []Address) {
 			resolved <- resolvedAddresses
 		},
