@@ -40,7 +40,7 @@
 //
 //  2. The client will route requests in a round-robin fashion to the
 //     addresses returned by the DNS system, preferring A records if
-//     present but using AAAA records if no A records are present,
+//     present (but using AAAA records if no A records are present),
 //     even with HTTP/2.
 //
 //     This differs from the http.DefaultClient, which will use only a
@@ -60,6 +60,31 @@
 // can be customized with different name resolution and load balancing
 // policies, via the [WithResolver] and [WithPicker] options. Active health
 // checking can be enabled via the [WithHealthChecks] option.
+//
+// Note that the behavior regarding A and AAAA records differs from the
+// http.DefaultClient. In http.DefaultClient, the underlying connections use
+// net.Dial directly on the provided hostname from the URL, and net.Dial in
+// turn implements an RFC 6555 fallback to ensure that connections can be
+// established even in the face of broken IPv6 configurations. Meanwhile,
+// [httplb.Client] defaults to resolving the name eagerly and treating the
+// resolved addresses as individual targets instead. In order to ensure
+// maximum compatibility out of the box, the default behavior is to prefer
+// IPv4 addresses whenever they are available: if DNS resolution returns
+// both IPv4 and IPv6 addresses, only the IPv4 addresses will be used.
+// Meanwhile, if DNS resolution only returns IPv6 addresses, those will be
+// used instead. To override this behavior, use [WithResolver] and instantiate
+// the DNS resolver with a different [resolver.AddressFamilyPolicy] value.
+// For example, to prefer IPv6 addresses instead, one could use:
+//
+//	client := httplb.NewClient(
+//	    httplb.WithResolver(
+//	        resolver.NewDNSResolver(
+//	            net.DefaultResolver,
+//	            resolver.PreferIPv6,
+//	            5 * time.Minute,     // TTL value
+//	        ),
+//	    ),
+//	)
 //
 // # Transport Architecture
 //
