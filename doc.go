@@ -38,8 +38,9 @@
 //  1. The client will re-resolve addresses in DNS every 5 minutes.
 //     The http.DefaultClient does not re-resolve predictably.
 //
-//  2. The client will route requests in a round-robin fashion to all
-//     addresses returned by the DNS system (both A and AAAA records).
+//  2. The client will route requests in a round-robin fashion to the
+//     addresses returned by the DNS system, preferring A records if
+//     present but using AAAA records if no A records are present,
 //     even with HTTP/2.
 //
 //     This differs from the http.DefaultClient, which will use only a
