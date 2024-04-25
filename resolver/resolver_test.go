@@ -39,7 +39,7 @@ func TestResolverTTL(t *testing.T) {
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	resolver := NewDNSResolver(net.DefaultResolver, "ip6", testTTL, AllFamilies)
+	resolver := NewDNSResolver(net.DefaultResolver, RequireIPv6, testTTL)
 	resolver.(*pollingResolver).clock = testClock
 
 	signal := make(chan struct{})
@@ -129,23 +129,31 @@ func TestAddressFamilyAffinity(t *testing.T) {
 		ip4Address2Resource,
 		ip6Address2Resource,
 	})
-	resolver := NewDNSResolver(mixedDNSResolver, "ip", 1, AllFamilies)
-	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2, ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, "ip", 1, PreferIPv4)
+	resolver := NewDNSResolver(mixedDNSResolver, PreferIPv4, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, "ip", 1, PreferIPv6)
+	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv4, 1)
+	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	resolver = NewDNSResolver(mixedDNSResolver, PreferIPv6, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv6, 1)
+	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	resolver = NewDNSResolver(mixedDNSResolver, UseBothIPv4AndIPv6, 1)
+	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2, ip6Address1, ip6Address2})
 
 	// A records only
 	ip4DNSResolver := newFakeDNSResolver(t, []dnsmessage.Resource{
 		ip4Address1Resource,
 		ip4Address2Resource,
 	})
-	resolver = NewDNSResolver(ip4DNSResolver, "ip", 1, AllFamilies)
+	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv4, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(ip4DNSResolver, "ip", 1, PreferIPv4)
+	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv4, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(ip4DNSResolver, "ip", 1, PreferIPv6)
+	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv6, 1)
+	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
+	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv6, 1)
+	testResolveAddresses(t, resolver, []net.IP{})
+	resolver = NewDNSResolver(ip4DNSResolver, UseBothIPv4AndIPv6, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip4Address1, ip4Address2})
 
 	// AAAA records only
@@ -153,11 +161,15 @@ func TestAddressFamilyAffinity(t *testing.T) {
 		ip6Address1Resource,
 		ip6Address2Resource,
 	})
-	resolver = NewDNSResolver(ip6DNSResolver, "ip", 1, AllFamilies)
+	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv4, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(ip6DNSResolver, "ip", 1, PreferIPv4)
+	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv4, 1)
+	testResolveAddresses(t, resolver, []net.IP{})
+	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv6, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(ip6DNSResolver, "ip", 1, PreferIPv6)
+	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv6, 1)
+	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
+	resolver = NewDNSResolver(ip6DNSResolver, UseBothIPv4AndIPv6, 1)
 	testResolveAddresses(t, resolver, []net.IP{ip6Address1, ip6Address2})
 }
 
@@ -181,7 +193,15 @@ func testResolveAddresses(
 			resolved <- resolvedAddresses
 		},
 		onResolveError: func(err error) {
-			t.Errorf("unexpected resolution error: %v", err)
+			if len(expectedAddresses) > 0 {
+				t.Errorf("unexpected resolution error: %v", err)
+			} else {
+				dnsErr := &net.DNSError{}
+				if assert.ErrorAs(t, err, &dnsErr) {
+					assert.True(t, dnsErr.IsNotFound)
+					resolved <- []Address{}
+				}
+			}
 		},
 	}, refreshCh)
 
