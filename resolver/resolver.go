@@ -18,10 +18,41 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/internal"
+)
+
+// AddressFamilyPolicy is an option that allows control over the preference
+// for which addresses to consider when resolving, based on their address
+// family.
+type AddressFamilyPolicy int
+
+const (
+	// PreferIPv4 will result in only IPv4 addresses being used, if any
+	// IPv4 addresses are present. If no IPv4 addresses are resolved, then
+	// all addresses will be used.
+	PreferIPv4 AddressFamilyPolicy = iota
+
+	// RequireIPv4 will result in only IPv4 addresses being used. If no IPv4
+	// addresses are present, no addresses will be resolved.
+	RequireIPv4
+
+	// PreferIPv6 will result in only IPv6 addresses being used, if any
+	// IPv6 addresses are present. If no IPv6 addresses are resolved, then
+	// all addresses will be used.
+	PreferIPv6
+
+	// RequireIPv6 will result in only IPv6 addresses being used. If no IPv6
+	// addresses are present, no addresses will be resolved.
+	RequireIPv6
+
+	// PreferIPv6 will result in only IPv6 addresses being used, if any
+	// UseBothIPv4AndIPv6 will result in all addresses being used, regardless of
+	// their address family.
+	UseBothIPv4AndIPv6
 )
 
 // Resolver is an interface for continuous name resolution.
@@ -102,21 +133,19 @@ type Address struct {
 	Attributes attribute.Values
 }
 
-// NewDNSResolver creates a new resolver that resolves DNS names.
-// You can specify which kind of network addresses to resolve with the network
-// parameter, and the resolver will return only IP addresses of the type
-// specified by network. The network must be one of "ip", "ip4" or "ip6".
-// Note that because net.Resolver does not expose the record TTL values, this
-// resolver uses the fixed TTL provided in the ttl parameter.
+// NewDNSResolver creates a new resolver that resolves DNS names. The specified
+// address family policy value can be used to require or prefer either IPv4 or
+// IPv6 addresses. Note that because net.Resolver does not expose the record
+// TTL values, this resolver uses the fixed TTL provided in the ttl parameter.
 func NewDNSResolver(
 	resolver *net.Resolver,
-	network string,
+	policy AddressFamilyPolicy,
 	ttl time.Duration,
 ) Resolver {
 	return NewPollingResolver(
 		&dnsResolveProber{
 			resolver: resolver,
-			network:  network,
+			policy:   policy,
 		},
 		ttl,
 	)
@@ -138,7 +167,7 @@ func NewPollingResolver(
 
 type dnsResolveProber struct {
 	resolver *net.Resolver
-	network  string
+	policy   AddressFamilyPolicy
 }
 
 func (r *dnsResolveProber) ResolveOnce(
@@ -157,10 +186,12 @@ func (r *dnsResolveProber) ResolveOnce(
 			port = "80"
 		}
 	}
-	addresses, err := r.resolver.LookupNetIP(ctx, r.network, host)
+	network := networkForAddressFamilyPolicy(r.policy)
+	addresses, err := r.resolver.LookupNetIP(ctx, network, host)
 	if err != nil {
 		return nil, 0, err
 	}
+	addresses = applyAddressFamilyPolicy(addresses, r.policy)
 	result := make([]Address, len(addresses))
 	for i, address := range addresses {
 		result[i].HostPort = net.JoinHostPort(address.Unmap().String(), port)
@@ -247,4 +278,39 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 			// Continue.
 		}
 	}
+}
+
+func networkForAddressFamilyPolicy(policy AddressFamilyPolicy) string {
+	switch policy {
+	case PreferIPv4, PreferIPv6, UseBothIPv4AndIPv6:
+		return "ip"
+	case RequireIPv4:
+		return "ip4"
+	case RequireIPv6:
+		return "ip6"
+	}
+	return ""
+}
+
+func applyAddressFamilyPolicy(addresses []netip.Addr, policy AddressFamilyPolicy) []netip.Addr {
+	var check func(netip.Addr) bool
+	required := policy == RequireIPv4 || policy == RequireIPv6
+	switch policy {
+	case PreferIPv4, RequireIPv4:
+		check = func(address netip.Addr) bool { return address.Is4() || address.Is4In6() }
+	case PreferIPv6, RequireIPv6:
+		check = func(address netip.Addr) bool { return address.Is6() && !address.Is4In6() }
+	case UseBothIPv4AndIPv6:
+		return addresses
+	}
+	matchingAddresses := addresses[:0]
+	for _, address := range addresses {
+		if check(address) {
+			matchingAddresses = append(matchingAddresses, address)
+		}
+	}
+	if required || len(matchingAddresses) > 0 {
+		addresses = matchingAddresses
+	}
+	return addresses
 }
