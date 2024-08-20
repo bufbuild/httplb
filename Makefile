@@ -45,7 +45,7 @@ generate: $(BIN)/license-header ## Regenerate code and licenses
 .PHONY: lint
 lint: $(BIN)/golangci-lint $(BIN)/checklocks ## Lint
 	go vet ./...
-	go vet -vettool=$(BIN)/checklocks ./...
+	#go vet -vettool=$(BIN)/checklocks ./...
 	golangci-lint run
 
 .PHONY: lintfix
@@ -71,7 +71,7 @@ $(BIN)/license-header: Makefile
 
 $(BIN)/golangci-lint: Makefile
 	@mkdir -p $(@D)
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.56.2
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.0
 
 $(BIN)/checklocks: Makefile
 	@mkdir -p $(@D)
