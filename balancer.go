@@ -301,6 +301,12 @@ func (b *balancer) updateConns(newAddrs []resolver.Address, removeConns []conn.C
 			b.pool.RemoveConn(c)
 		}
 	}()
+	var checkClosers []io.Closer
+	defer func() {
+		for _, c := range checkClosers {
+			_ = c.Close()
+		}
+	}()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	newConns := make([]conn.Conn, 0, len(b.conns)+numAdded-numRemoved)
@@ -312,7 +318,7 @@ func (b *balancer) updateConns(newAddrs []resolver.Address, removeConns []conn.C
 			delete(b.connInfo, existing)
 			info.cancel()
 			if info.closeChecker != nil {
-				_ = info.closeChecker.Close()
+				checkClosers = append(checkClosers, info.closeChecker)
 			}
 			continue
 		}
@@ -331,12 +337,6 @@ func (b *balancer) initConnInfoLocked(conns []conn.Conn) {
 		connection := conns[i]
 		connCtx, connCancel := context.WithCancel(b.ctx)
 		healthChecker := b.healthChecker.New(connCtx, connection, b)
-		go func() {
-			defer connCancel()
-			if err := connection.Prewarm(connCtx); err == nil {
-				b.warmedUp(connection)
-			}
-		}()
 		cancel := connCancel
 		if b.roundTripperMaxLifetime != 0 {
 			timer := b.clock.AfterFunc(b.roundTripperMaxLifetime, func() {
@@ -348,6 +348,11 @@ func (b *balancer) initConnInfoLocked(conns []conn.Conn) {
 			}
 		}
 		b.connInfo[connection] = connInfo{closeChecker: healthChecker, cancel: cancel}
+		go func() {
+			if err := connection.Prewarm(connCtx); err == nil {
+				b.warmedUp(connection)
+			}
+		}()
 	}
 }
 

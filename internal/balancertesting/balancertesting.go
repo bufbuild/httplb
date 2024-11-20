@@ -343,7 +343,7 @@ func NewFakeHealthChecker() *FakeHealthChecker {
 // New implements the healthchecker.Checker interface. It will use the
 // given tracker to mark the given connection with the currently configured
 // initial health state (which defaults to health).
-func (hc *FakeHealthChecker) New(_ context.Context, connection conn.Conn, tracker health.Tracker) io.Closer {
+func (hc *FakeHealthChecker) New(ctx context.Context, connection conn.Conn, tracker health.Tracker) io.Closer {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
 	state := hc.initialState
@@ -357,6 +357,14 @@ func (hc *FakeHealthChecker) New(_ context.Context, connection conn.Conn, tracke
 		if ch := hc.initialized[connection]; ch != nil {
 			close(ch)
 		}
+		context.AfterFunc(ctx, func() {
+			// Automatically force state to unhealthy after context is cancelled.
+			tracker := hc.updateHealthState(connection, health.StateUnhealthy, true)
+			if tracker == nil {
+				return
+			}
+			tracker.UpdateHealthState(connection, health.StateUnhealthy)
+		})
 	}()
 	select {
 	case hc.checkersUpdated <- struct{}{}:
@@ -378,10 +386,24 @@ func (hc *FakeHealthChecker) New(_ context.Context, connection conn.Conn, tracke
 
 // UpdateHealthState allows the state of a connection to be changed.
 func (hc *FakeHealthChecker) UpdateHealthState(connection conn.Conn, state health.State) {
+	tracker := hc.updateHealthState(connection, state, false)
+	if tracker != nil {
+		tracker.UpdateHealthState(connection, state)
+	}
+}
+
+func (hc *FakeHealthChecker) updateHealthState(connection conn.Conn, state health.State, removeTracker bool) health.Tracker {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	hc.trackers[connection].UpdateHealthState(connection, state)
+	tracker := hc.trackers[connection]
+	if tracker == nil {
+		return nil
+	}
 	hc.conns[connection] = state
+	if removeTracker {
+		delete(hc.trackers, connection)
+	}
+	return tracker
 }
 
 // SetInitialState sets the state that new connections will be put into
