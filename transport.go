@@ -105,6 +105,9 @@ type TransportConfig struct {
 	// KeepWarm indicates that the round-tripper should try to keep a ready
 	// network connection open to reduce any delays in processing a request.
 	KeepWarm bool
+	// DisableCompression is used by the round-tripper to disable automatically
+	// requesting compressed content and decompressing transparently.
+	DisableCompression bool
 }
 
 func transportConfigFromOptions(opts *clientOptions) TransportConfig {
@@ -116,6 +119,7 @@ func transportConfigFromOptions(opts *clientOptions) TransportConfig {
 		IdleConnTimeout:         opts.idleConnTimeout,
 		TLSClientConfig:         opts.tlsClientConfig,
 		TLSHandshakeTimeout:     opts.tlsHandshakeTimeout,
+		DisableCompression:      opts.disableCompression,
 	}
 }
 
@@ -134,6 +138,7 @@ func (s simpleTransport) NewRoundTripper(_, _ string, opts TransportConfig) Roun
 		TLSClientConfig:        opts.TLSClientConfig,
 		MaxResponseHeaderBytes: opts.MaxResponseHeaderBytes,
 		ExpectContinueTimeout:  1 * time.Second,
+		DisableCompression:     opts.DisableCompression,
 	}
 	// no way to populate pre-warm function since http.Transport doesn't provide
 	// any way to do that :(
@@ -151,7 +156,8 @@ func (s h2cTransport) NewRoundTripper(_, _ string, opts TransportConfig) RoundTr
 		},
 		// We don't bother setting the TLS config, because h2c is plain-text only
 		//TLSClientConfig:   opts.TLSClientConfig,
-		MaxHeaderListSize: uint32(opts.MaxResponseHeaderBytes),
+		MaxHeaderListSize:  uint32(opts.MaxResponseHeaderBytes),
+		DisableCompression: opts.DisableCompression,
 	}
 	return RoundTripperResult{RoundTripper: transport, Scheme: "http", Close: transport.CloseIdleConnections}
 }
