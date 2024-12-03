@@ -343,6 +343,14 @@ func WithRedirects(redirectFunc RedirectFunc) ClientOption {
 	})
 }
 
+// WithDisableCompression configures the HTTP client to not automatically
+// request compressed responses, and disables automatic response decompression.
+func WithDisableCompression(ok bool) ClientOption {
+	return clientOptionFunc(func(opts *clientOptions) {
+		opts.disableCompression = ok
+	})
+}
+
 // RedirectFunc is a function that advises an HTTP client on whether to
 // follow a redirect. The given req is the redirected request, based on
 // the server's previous status code and "Location" header, and the given
@@ -390,6 +398,7 @@ type clientOptions struct {
 	tlsHandshakeTimeout     time.Duration
 	defaultTimeout          time.Duration
 	requestTimeout          time.Duration
+	disableCompression      bool
 }
 
 func (opts *clientOptions) applyDefaults() {

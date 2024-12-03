@@ -207,6 +207,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 			dialCount.Add(1)
 			return defaultDialer.DialContext(ctx, network, addr)
 		}),
+		WithDisableCompression(true),
 	)
 	client3 := makeClient(t, ctx, transportOption) // all defaults, no explicitly configured backend
 
@@ -225,6 +226,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
 	require.True(t, rtOpts.KeepWarm)
+	require.False(t, rtOpts.DisableCompression)
 	// and check that settings were conveyed to round tripper as expected
 	val, ok = latestResults.Load(addr1)
 	require.True(t, ok)
@@ -234,6 +236,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 	require.Equal(t, 10*time.Second, transport.TLSHandshakeTimeout)
 	require.Equal(t, int64(1<<20), transport.MaxResponseHeaderBytes)
 	require.Zero(t, transport.IdleConnTimeout)
+	require.False(t, transport.DisableCompression)
 
 	// no redirects
 	sendGetRequest(t, ctx, client1, fmt.Sprintf("http://%s/redirect", addr1), expectRedirect("/foo"))
@@ -254,6 +257,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 	require.Equal(t, int64(1<<20), rtOpts.MaxResponseHeaderBytes)
 	require.Zero(t, rtOpts.IdleConnTimeout)
 	require.False(t, rtOpts.KeepWarm)
+	require.False(t, rtOpts.DisableCompression)
 
 	// now try backend with the options
 	sendGetRequest(t, ctx, client2, fmt.Sprintf("http://%s/foo", addr2), expectSuccess("got it"))
@@ -271,6 +275,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 	require.Equal(t, int64(10101), rtOpts.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, rtOpts.IdleConnTimeout)
 	require.True(t, rtOpts.KeepWarm)
+	require.True(t, rtOpts.DisableCompression)
 	// and check that settings were conveyed to round tripper as expected
 	val, ok = latestResults.Load(addr2)
 	require.True(t, ok)
@@ -282,6 +287,7 @@ func TestNewClient_TransportConfig(t *testing.T) {
 	require.Equal(t, 5*time.Second, transport.TLSHandshakeTimeout)
 	require.Equal(t, int64(10101), transport.MaxResponseHeaderBytes)
 	require.Equal(t, time.Second, transport.IdleConnTimeout)
+	require.True(t, transport.DisableCompression)
 
 	// This one allows redirects
 	sendGetRequest(t, ctx, client2, fmt.Sprintf("http://%s/redirect3", addr2), expectSuccess("got it"))
