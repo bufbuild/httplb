@@ -62,7 +62,7 @@ func (m *minConnsReceiver) OnResolve(addresses []Address) {
 		multiplier++ // div rounded down
 	}
 	scaledAddrs := make([]Address, 0, len(addresses)*multiplier)
-	for i := 0; i < multiplier; i++ {
+	for range multiplier {
 		scaledAddrs = append(scaledAddrs, addresses...)
 	}
 	m.rcvr.OnResolve(scaledAddrs)

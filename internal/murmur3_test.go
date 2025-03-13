@@ -62,7 +62,7 @@ func TestMurmurHash3Uneven(t *testing.T) {
 func BenchmarkMurmurHash3(b *testing.B) {
 	var benchmarkString = []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
 	h := NewMurmurHash3(0)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = h.Write(benchmarkString)
 		h.Sum32()
 		h.Reset()
@@ -72,7 +72,7 @@ func BenchmarkMurmurHash3(b *testing.B) {
 func BenchmarkFNV1a(b *testing.B) {
 	var benchmarkString = []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
 	h := fnv.New32a()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = h.Write(benchmarkString)
 		h.Sum32()
 		h.Reset()

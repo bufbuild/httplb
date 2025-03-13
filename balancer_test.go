@@ -397,7 +397,7 @@ func TestBalancer_HealthChecking(t *testing.T) {
 			return nil
 		}
 		select {
-		case <-ch.(chan struct{}):
+		case <-ch.(chan struct{}): //nolint:errcheck
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
@@ -654,7 +654,7 @@ func awaitConnIndices(t *testing.T, pool *balancertesting.FakeConnPool, indexes 
 		}
 		gotIndexes = make([]int, 0, len(snapshot))
 		for cn := range snapshot {
-			gotIndexes = append(gotIndexes, cn.(*balancertesting.FakeConn).Index)
+			gotIndexes = append(gotIndexes, cn.(*balancertesting.FakeConn).Index) //nolint:errcheck
 		}
 		sort.Ints(gotIndexes)
 		if reflect.DeepEqual(indexes, gotIndexes) {
@@ -725,7 +725,7 @@ func connStatesFromSnapshot(snapshot conns.Set) map[connState]attribute.Values {
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*balancertesting.FakeConn).Index,
+			index:    c.(*balancertesting.FakeConn).Index, //nolint:errcheck
 		}] = c.Address().Attributes
 	}
 	return got
@@ -736,7 +736,7 @@ func connStatesFromHealthSnapshot(snapshot balancertesting.ConnHealth) map[connS
 	for c := range snapshot {
 		got[connState{
 			hostPort: c.Address().HostPort,
-			index:    c.(*balancertesting.FakeConn).Index,
+			index:    c.(*balancertesting.FakeConn).Index, //nolint:errcheck
 		}] = c.Address().Attributes
 	}
 	return got

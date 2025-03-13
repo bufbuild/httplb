@@ -82,6 +82,7 @@ type leastLoadedRandom struct {
 	rng *rand.Rand
 }
 
+//nolint:recvcheck // mix of pointer and non-pointer receiver methods is intentional
 type leastLoadedConnHeap []*leastLoadedConnItem
 
 type leastLoadedConnItem struct {

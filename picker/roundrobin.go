@@ -30,7 +30,7 @@ func NewRoundRobin(_ Picker, allConns conn.Conns) Picker {
 	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
-	for i := 0; i < numConns; i++ {
+	for i := range numConns {
 		conns[i] = allConns.Get(i)
 	}
 	rnd.Shuffle(numConns, func(i, j int) {

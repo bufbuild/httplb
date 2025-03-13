@@ -45,7 +45,7 @@ func (s Set) Equals(other Set) bool {
 // ToSet converts a conn.Conns into a conn.Set.
 func ToSet(conns conn.Conns) Set {
 	set := Set{}
-	for i := 0; i < conns.Len(); i++ {
+	for i := range conns.Len() {
 		set[conns.Get(i)] = struct{}{}
 	}
 	return set

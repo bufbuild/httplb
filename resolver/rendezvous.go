@@ -141,20 +141,20 @@ func newAddressHeap(addrs []Address, key []byte, hash hash.Hash32) *addressHeap 
 	return addrHeap
 }
 
-func (h addressHeap) rank(addr Address) uint32 {
+func (h *addressHeap) rank(addr Address) uint32 {
 	h.hash.Reset()
 	_, _ = h.hash.Write(h.key)
 	_, _ = h.hash.Write([]byte(addr.HostPort))
 	return h.hash.Sum32()
 }
 
-func (h addressHeap) Len() int { return len(h.addrs) }
+func (h *addressHeap) Len() int { return len(h.addrs) }
 
-func (h addressHeap) Less(i, j int) bool {
+func (h *addressHeap) Less(i, j int) bool {
 	return h.ranks[i] < h.ranks[j]
 }
 
-func (h addressHeap) Swap(i, j int) {
+func (h *addressHeap) Swap(i, j int) {
 	h.addrs[i], h.addrs[j] = h.addrs[j], h.addrs[i]
 	h.ranks[i], h.ranks[j] = h.ranks[j], h.ranks[i]
 }

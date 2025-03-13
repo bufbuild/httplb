@@ -86,7 +86,6 @@ func TestNewClient_MultipleTargets(t *testing.T) {
 		addr3: "twinkle twinkle little bat", //nolint:dupword //intentional!
 	}
 	for addr, expected := range cases {
-		addr, expected := addr, expected
 		sentGroup.Add(1)
 		go func() {
 			defer func() {
@@ -144,7 +143,7 @@ func TestNewClient_LoadBalancing(t *testing.T) {
 	)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

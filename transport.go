@@ -235,7 +235,6 @@ func (m *mainTransport) closeKeepWarmPools() {
 	}()
 	grp, _ := errgroup.WithContext(context.Background())
 	for _, pool := range pools {
-		pool := pool
 		grp.Go(func() error {
 			pool.close()
 			return nil
@@ -784,7 +783,6 @@ func (t *transportPool) close() {
 	grp, _ := errgroup.WithContext(context.Background())
 	for _, connSlice := range [][]*connection{conns, removedConns} {
 		for _, current := range connSlice {
-			current := current
 			grp.Go(func() error {
 				current.close()
 				return nil

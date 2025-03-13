@@ -242,5 +242,5 @@ type dummyConn struct {
 }
 
 func connID(cn conn.Conn) string {
-	return cn.(dummyConn).id
+	return cn.(dummyConn).id //nolint:errcheck
 }

@@ -36,7 +36,7 @@ func TestPollingChecker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 	checker := NewPollingChecker(PollingCheckerConfig{}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	checker.(*pollingChecker).clock = testClock //nolint:errcheck
 	tracker := make(fakeHealthTracker, 1)
 
 	// StateUnhealthy (HTTP error)
@@ -77,7 +77,7 @@ func TestPollingCheckerThresholds(t *testing.T) {
 		HealthyThreshold:   2,
 		UnhealthyThreshold: 3,
 	}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	checker.(*pollingChecker).clock = testClock //nolint:errcheck
 
 	connection := make(fakeConnChan)
 	tracker := make(fakeHealthTracker)
