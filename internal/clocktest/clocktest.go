@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -48,13 +48,13 @@ type clockworkFakeClock interface {
 
 // NewFakeClock creates a new FakeClock using Clockwork.
 func NewFakeClock() FakeClock {
-	return fakeClock{clockwork.NewFakeClock().(clockworkFakeClock)} //nolint:forcetypeassert
+	return fakeClock{clockwork.NewFakeClock().(clockworkFakeClock)} //nolint:forcetypeassert,errcheck
 }
 
 // NewFakeClockAt creates a new FakeClock using Clockwork set to a specific
 // time, to provide fully deterministic clock behavior.
 func NewFakeClockAt(t time.Time) FakeClock {
-	return fakeClock{clockwork.NewFakeClockAt(t).(clockworkFakeClock)} //nolint:forcetypeassert
+	return fakeClock{clockwork.NewFakeClockAt(t).(clockworkFakeClock)} //nolint:forcetypeassert,errcheck
 }
 
 // fakeClock wraps the clockwork.FakeClock interface and adapts it to the

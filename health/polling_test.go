@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ func TestPollingChecker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 	checker := NewPollingChecker(PollingCheckerConfig{}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	checker.(*pollingChecker).clock = testClock //nolint:errcheck
 	tracker := make(fakeHealthTracker, 1)
 
 	// StateUnhealthy (HTTP error)
@@ -77,7 +77,7 @@ func TestPollingCheckerThresholds(t *testing.T) {
 		HealthyThreshold:   2,
 		UnhealthyThreshold: 3,
 	}, NewSimpleProber("/"))
-	checker.(*pollingChecker).clock = testClock
+	checker.(*pollingChecker).clock = testClock //nolint:errcheck
 
 	connection := make(fakeConnChan)
 	tracker := make(fakeHealthTracker)

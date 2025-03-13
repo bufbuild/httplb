@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ func (s Set) Equals(other Set) bool {
 // ToSet converts a conn.Conns into a conn.Set.
 func ToSet(conns conn.Conns) Set {
 	set := Set{}
-	for i := 0; i < conns.Len(); i++ {
+	for i := range conns.Len() {
 		set[conns.Get(i)] = struct{}{}
 	}
 	return set

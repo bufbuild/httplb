@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ func (m *minConnsReceiver) OnResolve(addresses []Address) {
 		multiplier++ // div rounded down
 	}
 	scaledAddrs := make([]Address, 0, len(addresses)*multiplier)
-	for i := 0; i < multiplier; i++ {
+	for range multiplier {
 		scaledAddrs = append(scaledAddrs, addresses...)
 	}
 	m.rcvr.OnResolve(scaledAddrs)

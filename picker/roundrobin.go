@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ func NewRoundRobin(_ Picker, allConns conn.Conns) Picker {
 	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
-	for i := 0; i < numConns; i++ {
+	for i := range numConns {
 		conns[i] = allConns.Get(i)
 	}
 	rnd.Shuffle(numConns, func(i, j int) {

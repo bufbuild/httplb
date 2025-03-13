@@ -1,4 +1,4 @@
-// Copyright 2023 Buf Technologies, Inc.
+// Copyright 2023-2025 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ func TestResolverTTL(t *testing.T) {
 
 	testClock := clocktest.NewFakeClock()
 	resolver := NewDNSResolver(net.DefaultResolver, RequireIPv6, testTTL)
-	resolver.(*pollingResolver).clock = testClock
+	resolver.(*pollingResolver).clock = testClock //nolint:errcheck
 
 	signal := make(chan struct{})
 	task := resolver.New(ctx, "http", "::1", testReceiver{
@@ -195,7 +195,7 @@ func testResolveAddresses(
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	resolver.(*pollingResolver).clock = testClock
+	resolver.(*pollingResolver).clock = testClock //nolint:errcheck
 
 	resolved := make(chan []Address)
 	task := resolver.New(ctx, "http", target, testReceiver{

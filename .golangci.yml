@@ -27,13 +27,11 @@ linters:
   disable:
     - cyclop            # covered by gocyclo
     - depguard          # unnecessary for small libraries
-    - execinquery       # deprecated in golangci v1.58.0
     - exhaustruct       # not helpful, prevents idiomatic struct literals
     - funlen            # rely on code review to limit function length
     - gocognit          # dubious "cognitive overhead" quantification
     - gofumpt           # prefer standard gofmt
     - goimports         # rely on gci instead
-    - gomnd             # some unnamed constants are okay
     - inamedparam       # convention is not followed
     - ireturn           # "accept interfaces, return structs" isn't ironclad
     - lll               # don't want hard limits for line length
@@ -41,6 +39,7 @@ linters:
     - mnd               # some unnamed constants are okay
     - nlreturn          # generous whitespace violates house style
     - nonamedreturns    # named returns are fine; it's *bare* returns that are bad
+    - tenv              # deprecated in golangci v1.64.0
     - testpackage       # internal tests are fine
     - wrapcheck         # don't _always_ need to wrap errors
     - wsl               # generous whitespace violates house style
@@ -50,6 +49,8 @@ issues:
     # Don't ban use of fmt.Errorf to create new errors, but the remaining
     # checks from err113 are useful.
     - "do not define dynamic errors.*"
+    # This gosec error is noisy with false positives.
+    - "G115: integer overflow conversion"
   exclude-rules:
     # Needlessly verbose inside of test-only code.
     - path: (.+)_test\.go

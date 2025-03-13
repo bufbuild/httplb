@@ -9,7 +9,7 @@ MAKEFLAGS += --no-print-directory
 BIN := .tmp/bin
 export PATH := $(BIN):$(PATH)
 export GOBIN := $(abspath $(BIN))
-COPYRIGHT_YEARS := 2023
+COPYRIGHT_YEARS := 2023-2025
 LICENSE_IGNORE := --ignore /testdata/
 
 .PHONY: help
@@ -71,8 +71,8 @@ $(BIN)/license-header: Makefile
 
 $(BIN)/golangci-lint: Makefile
 	@mkdir -p $(@D)
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.0
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.7
 
 $(BIN)/checklocks: Makefile
 	@mkdir -p $(@D)
-	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20231003185701-9d5198a863bf
+	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20250313000854-906fb319cc3a
