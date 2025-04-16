@@ -80,7 +80,13 @@ func (f fakeClock) NewTicker(d time.Duration) internal.Ticker {
 // clockwork.Clock.NewTimer as a clock.Timer. See package comment for more
 // information on why this is necessary.
 func (f fakeClock) NewTimer(d time.Duration) internal.Timer {
-	return f.clockworkFakeClock.NewTimer(d)
+	t := f.clockworkFakeClock.NewTimer(d)
+	if d == 0 {
+		if !t.Stop() {
+			<-t.Chan()
+		}
+	}
+	return t
 }
 
 // AfterFunc implements clock.Clock by re-boxing the clockwork.Timer returned by
