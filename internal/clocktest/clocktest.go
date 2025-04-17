@@ -80,15 +80,15 @@ func (f fakeClock) NewTicker(d time.Duration) internal.Ticker {
 // clockwork.Clock.NewTimer as a clock.Timer. See package comment for more
 // information on why this is necessary.
 func (f fakeClock) NewTimer(d time.Duration) internal.Timer {
-	t := f.clockworkFakeClock.NewTimer(d)
+	timer := f.clockworkFakeClock.NewTimer(d)
 	if d == 0 {
 		// Here we reproduce the pre-1.23 timers behavior since jonboulle/clockwork still have not fixed this yet,
 		// see the issue: https://github.com/jonboulle/clockwork/issues/98
-		if !t.Stop() {
-			<-t.Chan()
+		if !timer.Stop() {
+			<-timer.Chan()
 		}
 	}
-	return t
+	return timer
 }
 
 // AfterFunc implements clock.Clock by re-boxing the clockwork.Timer returned by
