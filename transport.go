@@ -382,7 +382,6 @@ func (m *mainTransport) getPoolLocked(dest target) *transportPool {
 
 func (m *mainTransport) closeWhenIdle(ctx context.Context, dest target, pool *transportPool, activity <-chan struct{}) {
 	timer := m.clock.NewTimer(m.idleTransportTimeout)
-	defer timer.Stop()
 	for {
 		select {
 		case <-timer.Chan():

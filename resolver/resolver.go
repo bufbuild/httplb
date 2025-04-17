@@ -240,9 +240,6 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 	defer task.cancel()
 
 	timer := task.resolver.clock.NewTimer(0)
-	if !timer.Stop() {
-		<-timer.Chan()
-	}
 
 	for {
 		addresses, ttl, err := task.resolver.prober.ResolveOnce(ctx, scheme, hostPort)
@@ -261,18 +258,8 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.Chan()
-			}
 			return
 		case <-task.refreshCh:
-			// We still want to drain the timer in this case:
-			// > Reset should be invoked only on stopped or expired timers
-			// > with drained channels.
-			// https://pkg.go.dev/time#Timer.Reset
-			if !timer.Stop() {
-				<-timer.Chan()
-			}
 			// Continue.
 		case <-timer.Chan():
 			// Continue.
