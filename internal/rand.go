@@ -20,19 +20,12 @@ import (
 	"sync"
 )
 
-// This is based off discussion in a Reddit thread about creating new instances of
-// rand.Rand that are properly seeded, to avoid the global rand's synchronization
-// overhead. In particular, the use maphash.Hash to create a high-quality seed for
-// creating new instances of *rand.Rand.
-//   https://www.reddit.com/r/golang/comments/m9b0yp/comment/grotn1f/
-
 // NewRand returns a properly seeded *rand.Rand. The seed is computed using
 // the "hash/maphash" package, which can be used concurrently and is
 // lock-free. Effectively, we're using runtime.fastrand to seed a new
 // rand.Rand.
 func NewRand() *rand.Rand {
-	seed := (&maphash.Hash{}).Sum64()
-	return rand.New(rand.NewSource(int64(seed))) //nolint:gosec // don't need cryptographic RNG
+	return rand.New(rand.NewSource(randomSeed())) //nolint:gosec // don't need cryptographic RNG
 }
 
 // NewLockedRand is just like NewRand except the returned value uses a
@@ -51,9 +44,8 @@ func NewRand() *rand.Rand {
 // contending over the mutex except other code that has access to the same
 // instance.
 func NewLockedRand() *rand.Rand {
-	seed := (&maphash.Hash{}).Sum64()
 	//nolint:forcetypeassert,errcheck // specs say value returned by NewSource implements Source64
-	src := rand.NewSource(int64(seed)).(rand.Source64)
+	src := rand.NewSource(randomSeed()).(rand.Source64)
 	return rand.New(&lockedSource{src: src}) //nolint:gosec // don't need cryptographic RNG
 }
 
@@ -81,4 +73,15 @@ func (l *lockedSource) Seed(seed int64) {
 	l.mu.Lock()
 	l.src.Seed(seed)
 	l.mu.Unlock()
+}
+
+// randomSeed generates a high-quality (random) seed that can be used to
+// create new instances of *rand.Rand, while avoiding the global rand's
+// synchronization overhead. This solution comes from a discussion in a
+// Reddit thread:
+//
+//	https://www.reddit.com/r/golang/comments/m9b0yp/comment/grotn1f/
+func randomSeed() int64 {
+	var hash maphash.Hash
+	return int64(hash.Sum64())
 }
