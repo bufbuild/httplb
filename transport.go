@@ -34,7 +34,6 @@ import (
 	"github.com/bufbuild/httplb/internal"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
-	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -143,23 +142,6 @@ func (s simpleTransport) NewRoundTripper(_, _ string, opts TransportConfig) Roun
 	// no way to populate pre-warm function since http.Transport doesn't provide
 	// any way to do that :(
 	return RoundTripperResult{RoundTripper: transport, Close: transport.CloseIdleConnections}
-}
-
-type h2cTransport struct{}
-
-func (s h2cTransport) NewRoundTripper(_, _ string, opts TransportConfig) RoundTripperResult {
-	// We can't support all round tripper options with H2C.
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return defaultDialer.DialContext(ctx, network, addr)
-		},
-		// We don't bother setting the TLS config, because h2c is plain-text only
-		//TLSClientConfig:   opts.TLSClientConfig,
-		MaxHeaderListSize:  uint32(opts.MaxResponseHeaderBytes),
-		DisableCompression: opts.DisableCompression,
-	}
-	return RoundTripperResult{RoundTripper: transport, Scheme: "http", Close: transport.CloseIdleConnections}
 }
 
 // mainTransport is the root of the transport hierarchy. For each target
