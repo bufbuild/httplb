@@ -15,31 +15,21 @@
 package internal
 
 import (
-	"hash/maphash"
 	"math/rand"
+	randv2 "math/rand/v2"
 )
 
-// NewRand returns a properly seeded *rand.Rand. The seed is computed using
-// the "hash/maphash" package, which can be used concurrently and is
-// lock-free. Effectively, we're using the runtime's internal per-thread
-// RNG to seed a new rand.Rand.
+// NewRand returns a properly seeded *rand.Rand.
 //
 // The returned value is not thread-safe. If you need a thread-safe random
 // number generator, use the top-level functions of the "math/rand/v2"
 // package. They are not as fast as the Go 1 ("math/rand") generator, but
-// they are much faster if access to the Go 1 generator has to be
-// synchronized with a mutex.
+// they are much faster if access to the Go 1 generator must be guarded
+// by a mutex.
 func NewRand() *rand.Rand {
-	return rand.New(rand.NewSource(randomSeed())) //nolint:gosec // don't need cryptographic RNG
-}
-
-// randomSeed generates a high-quality (random) seed that can be used to
-// create new instances of *rand.Rand, while avoiding the global rand's
-// synchronization overhead. This solution comes from a discussion in a
-// Reddit thread:
-//
-//	https://www.reddit.com/r/golang/comments/m9b0yp/comment/grotn1f/
-func randomSeed() int64 {
-	var hash maphash.Hash
-	return int64(hash.Sum64())
+	// The top-level functions in "math/rand/v2" use the same per-thread,
+	// lock-free RNGs as the "hash/maphash" package. So we use that to
+	// generate a seed. Thereafter, we use the Go 1 generator in "math/rand"
+	// since its RNG is a bit faster than the offerings in "math/rand/v2".
+	return rand.New(rand.NewSource(randv2.Int64())) //nolint:gosec // don't need cryptographic RNG
 }
