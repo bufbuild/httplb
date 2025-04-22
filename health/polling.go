@@ -17,7 +17,7 @@ package health
 import (
 	"context"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"time"
@@ -48,7 +48,6 @@ func NewPollingChecker(config PollingCheckerConfig, prober Prober) Checker {
 		healthyThreshold:   config.HealthyThreshold,
 		unhealthyThreshold: config.UnhealthyThreshold,
 		prober:             prober,
-		rnd:                internal.NewLockedRand(),
 		clock:              internal.NewRealClock(),
 	}
 }
@@ -128,7 +127,6 @@ type pollingChecker struct {
 	healthyThreshold   int
 
 	prober Prober
-	rnd    *rand.Rand
 	clock  internal.Clock
 }
 
@@ -206,7 +204,7 @@ func (r *pollingChecker) calcJitter(interval time.Duration) time.Duration {
 	}
 
 	// This may lose precision if your interval is longer than ~104 days.
-	return time.Duration(float64(interval) + ((r.rnd.Float64()*2 - 1) * r.scaledJitter))
+	return time.Duration(float64(interval) + ((rand.Float64()*2 - 1) * r.scaledJitter)) //nolint:gosec // does not need to be cryptographically secure
 }
 
 type pollingCheckerTask struct {
