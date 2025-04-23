@@ -15,16 +15,16 @@
 package picker
 
 import (
+	"math/rand/v2"
 	"net/http"
 
 	"github.com/bufbuild/httplb/conn"
-	"github.com/bufbuild/httplb/internal"
 )
 
 // NewRandom creates pickers that picks a connections at random.
 func NewRandom(_ Picker, allConns conn.Conns) Picker {
-	rnd := internal.NewLockedRand()
 	return pickerFunc(func(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-		return allConns.Get(rnd.Intn(allConns.Len())), nil, nil
+		return allConns.Get(rand.IntN(allConns.Len())), //nolint:gosec // does not need to be cryptographically secure
+			nil, nil
 	})
 }

@@ -15,12 +15,11 @@
 package picker
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"sync/atomic"
 
 	"github.com/bufbuild/httplb/conn"
-	"github.com/bufbuild/httplb/internal"
 )
 
 // NewPowerOfTwo creates pickers that select two connections at random
@@ -49,15 +48,11 @@ func NewPowerOfTwo(prev Picker, allConns conn.Conns) Picker {
 		}
 	}
 
-	return &powerOfTwo{
-		conns: newConns,
-		rng:   internal.NewLockedRand(),
-	}
+	return &powerOfTwo{conns: newConns}
 }
 
 type powerOfTwo struct {
 	conns []*powerOfTwoConnItem
-	rng   *rand.Rand
 }
 
 type powerOfTwoConnItem struct {
@@ -67,8 +62,8 @@ type powerOfTwoConnItem struct {
 }
 
 func (p *powerOfTwo) Pick(*http.Request) (conn conn.Conn, whenDone func(), err error) {
-	entry1 := p.conns[p.rng.Intn(len(p.conns))]
-	entry2 := p.conns[p.rng.Intn(len(p.conns))]
+	entry1 := p.conns[rand.IntN(len(p.conns))] //nolint:gosec // does not need to be cryptographically secure
+	entry2 := p.conns[rand.IntN(len(p.conns))] //nolint:gosec // does not need to be cryptographically secure
 
 	var entry *powerOfTwoConnItem
 	if uint64(entry1.load.Load()) < uint64(entry2.load.Load()) {
