@@ -17,7 +17,6 @@ package httplb
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,9 +45,14 @@ var (
 //
 // If working with a library that requires an *[http.Client], use the embedded
 // Client. If working with a library that requires an [http.RoundTripper], use
-// the Transport field.
+// the embedded client's Transport field.
+//
+// It is safe to wrap the client's Transport field with middleware. This should
+// be done immediately after calling NewClient since mutating the embedded client
+// is not safe once the client is being used.
 type Client struct {
 	*http.Client
+	transport *mainTransport
 }
 
 // NewClient constructs a new HTTP client optimized for server-to-server
@@ -60,22 +64,20 @@ func NewClient(options ...ClientOption) *Client {
 		opt.applyToClient(&opts)
 	}
 	opts.applyDefaults()
+	transport := newTransport(&opts)
 	return &Client{
 		Client: &http.Client{
-			Transport:     newTransport(&opts),
+			Transport:     transport,
 			CheckRedirect: opts.redirectFunc,
 		},
+		transport: transport,
 	}
 }
 
 // Close the HTTP client, releasing any resources and stopping any associated
 // background goroutines.
 func (c *Client) Close() error {
-	transport, ok := c.Transport.(*mainTransport)
-	if !ok {
-		return errors.New("client not created by httplb.NewClient")
-	}
-	transport.close()
+	c.transport.close()
 	return nil
 }
 
@@ -92,11 +94,7 @@ func (c *Client) Close() error {
 func (c *Client) prewarm(ctx context.Context) error {
 	// TODO: Expose prewarm capability from this package and export this?
 	//       For now, this is just used from tests.
-	transport, ok := c.Transport.(*mainTransport)
-	if !ok {
-		return errors.New("client not created by httplb.NewClient")
-	}
-	return transport.prewarm(ctx)
+	return c.transport.prewarm(ctx)
 }
 
 // ClientOption is an option used to customize the behavior of an HTTP client
