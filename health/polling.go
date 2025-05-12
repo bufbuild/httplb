@@ -157,35 +157,38 @@ func (r *pollingChecker) New(
 		defer ticker.Stop()
 
 		for {
-			ctx, cancel := context.WithTimeout(ctx, r.timeout)
-			defer cancel()
+			func() {
+				ctx, cancel := context.WithTimeout(ctx, r.timeout)
+				defer cancel()
 
-			result := r.prober.Probe(ctx, conn)
+				result := r.prober.Probe(ctx, conn)
 
-			lastState := state
-			switch {
-			case result == StateHealthy && (state == StateUnhealthy || state == StateDegraded || state == StateUnknown):
-				counter++
-				if counter >= r.healthyThreshold {
+				lastState := state
+
+				switch {
+				case result == StateHealthy && (state == StateUnhealthy || state == StateDegraded || state == StateUnknown):
+					counter++
+					if counter >= r.healthyThreshold {
+						state = result
+						counter = 0
+					}
+
+				case state == StateHealthy && (result == StateUnhealthy || result == StateDegraded || result == StateUnknown):
+					counter++
+					if counter >= r.unhealthyThreshold {
+						state = result
+						counter = 0
+					}
+
+				default:
 					state = result
 					counter = 0
 				}
 
-			case state == StateHealthy && (result == StateUnhealthy || result == StateDegraded || result == StateUnknown):
-				counter++
-				if counter >= r.unhealthyThreshold {
-					state = result
-					counter = 0
+				if lastState != state {
+					tracker.UpdateHealthState(conn, result)
 				}
-
-			default:
-				state = result
-				counter = 0
-			}
-
-			if lastState != state {
-				tracker.UpdateHealthState(conn, result)
-			}
+			}()
 
 			select {
 			case <-ctx.Done():
