@@ -122,10 +122,70 @@ func TestPollingCheckerThresholds(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPollingCheckerTimeout(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+
+	interval := 5 * time.Second
+	testClock := clocktest.NewFakeClock()
+
+	checker := NewPollingChecker(PollingCheckerConfig{
+		PollingInterval: interval,
+		Timeout:         10 * time.Millisecond,
+	}, NewSimpleProber("/"))
+	checker.(*pollingChecker).clock = testClock //nolint:errcheck
+
+	connection := make(fakeConnChan)
+	tracker := make(fakeHealthTracker)
+	process := checker.New(ctx, connection, tracker)
+	advance := func(response *http.Response) {
+		t.Helper()
+		testClock.Advance(interval)
+		select {
+		case connection <- response:
+		case <-tracker:
+			t.Fatal("unexpected health state update")
+		}
+	}
+	expectState := func(expected State) {
+		select {
+		case state := <-tracker:
+			assert.Equal(t, expected, state)
+		case <-ctx.Done():
+			t.Fatal("health state not updated as expected within timeout")
+		}
+	}
+
+	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
+	expectState(StateHealthy)
+
+	// Trigger a probe but don't send a response
+	testClock.Advance(interval)
+	// Timeout is handled by Go context so we can't fake it, sleep a bit to trigger.
+	// If this test is flaky, raise this sleep and test timeout.
+	time.Sleep(100 * time.Millisecond)
+	expectState(StateUnhealthy)
+
+	// Next response will bring it back to healthy
+	advance(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody})
+	close(connection)
+	expectState(StateHealthy)
+
+	err := process.Close()
+	require.NoError(t, err)
+}
+
 type fakeConnChan chan *http.Response
 
-func (f fakeConnChan) RoundTrip(_ *http.Request, _ func()) (*http.Response, error) {
-	response := <-f
+func (f fakeConnChan) RoundTrip(req *http.Request, _ func()) (*http.Response, error) {
+	var response *http.Response
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case response = <-f:
+	}
 	if response == nil {
 		return nil, errors.New("fake error")
 	}
