@@ -42,24 +42,24 @@ func TestPollingChecker(t *testing.T) {
 	// StateUnhealthy (HTTP error)
 	connection := make(fakeConnChan)
 	close(connection)
-	err := checker.New(ctx, connection, tracker).Close()
-	require.NoError(t, err)
+	prober := checker.New(ctx, connection, tracker)
 	assert.Equal(t, StateUnhealthy, <-tracker)
+	require.NoError(t, prober.Close())
 
 	// StateUnhealthy (HTTP 5xx)
 	connection = make(fakeConnChan, 1)
 	connection <- &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody}
-	err = checker.New(ctx, connection, tracker).Close()
-	require.NoError(t, err)
+	prober = checker.New(ctx, connection, tracker)
 	assert.Equal(t, StateUnhealthy, <-tracker)
+	require.NoError(t, prober.Close())
 	close(connection)
 
 	// StateHealthy (HTTP 2xx)
 	connection = make(fakeConnChan, 1)
 	connection <- &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
-	err = checker.New(ctx, connection, tracker).Close()
-	require.NoError(t, err)
+	prober = checker.New(ctx, connection, tracker)
 	assert.Equal(t, StateHealthy, <-tracker)
+	require.NoError(t, prober.Close())
 	close(connection)
 }
 
