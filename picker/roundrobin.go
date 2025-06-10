@@ -15,11 +15,11 @@
 package picker
 
 import (
+	"math/rand/v2"
 	"net/http"
 	"sync/atomic"
 
 	"github.com/bufbuild/httplb/conn"
-	"github.com/bufbuild/httplb/internal"
 )
 
 // NewRoundRobin creates pickers that pick connections in a "round-robin"
@@ -27,13 +27,12 @@ import (
 // of a "thundering herd" scenario, the order of connections is randomized
 // each time the list of hosts changes.
 func NewRoundRobin(_ Picker, allConns conn.Conns) Picker {
-	rnd := internal.NewRand()
 	numConns := allConns.Len()
 	conns := make([]conn.Conn, numConns)
 	for i := range numConns {
 		conns[i] = allConns.Get(i)
 	}
-	rnd.Shuffle(numConns, func(i, j int) {
+	rand.Shuffle(numConns, func(i, j int) {
 		conns[i], conns[j] = conns[j], conns[i]
 	})
 	picker := &roundRobin{conns: conns}

@@ -17,12 +17,11 @@ package picker
 import (
 	"container/heap"
 	"math/bits"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"sync"
 
 	"github.com/bufbuild/httplb/conn"
-	"github.com/bufbuild/httplb/internal"
 )
 
 // NewLeastLoadedRoundRobin creates pickers that pick the connection
@@ -60,7 +59,6 @@ func NewLeastLoadedRandom(prev Picker, allConns conn.Conns) Picker {
 		leastLoadedBase: leastLoadedBase{
 			conns: newConnHeap(allConns),
 		},
-		rng: internal.NewRand(),
 	}
 }
 
@@ -78,8 +76,6 @@ type leastLoadedRoundRobin struct {
 
 type leastLoadedRandom struct {
 	leastLoadedBase
-	// +checklocks:mu
-	rng *rand.Rand
 }
 
 //nolint:recvcheck // mix of pointer and non-pointer receiver methods is intentional
@@ -116,7 +112,7 @@ func (p *leastLoadedRandom) Pick(*http.Request) (conn conn.Conn, whenDone func()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.leastLoadedBase.pickLocked(p.rng.Uint64())
+	return p.leastLoadedBase.pickLocked(rand.Uint64()) //nolint:gosec // don't need crypto/rand here
 }
 
 func newConnHeap(allConns conn.Conns) *leastLoadedConnHeap {
