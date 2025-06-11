@@ -38,8 +38,9 @@ var (
 )
 
 const (
-	reresolveMinInterval = 5 * time.Second
-	reresolveMinPercent  = 50
+	// reresolveMinPercent is the percentage of backends becoming unhealthy
+	// that trigger a forced re-resolve of addresses.
+	reresolveMinPercent = 50
 )
 
 func newBalancer(
@@ -111,8 +112,6 @@ type balancer struct {
 	conns []conn.Conn
 	// +checklocks:mu
 	connInfo map[conn.Conn]connInfo
-	// +checklocks:mu
-	reresolveLastCall time.Time
 	// +checklocks:mu
 	connsToRecycle []conn.Conn
 }
@@ -415,15 +414,12 @@ func (b *balancer) computeUsableConnsLocked() []conn.Conn {
 		}
 	}
 
-	// If we have less usable connections than the reresolve threshold, reresolve.
-	// TODO: make some of these options configurable
+	// If we have fewer usable connections than the re-resolve threshold, re-resolve.
+	// TODO: make this logic for assessing re-resolve conditions configurable
 	numHealthy := len(connsByState[health.StateHealthy])
 	numTotal := len(b.conns)
 	if int(math.Round(reresolveMinPercent*float64(numTotal)/100)) >= numHealthy {
-		if b.reresolveLastCall.IsZero() || b.clock.Since(b.reresolveLastCall) > reresolveMinInterval {
-			b.reresolveLastCall = b.clock.Now()
-			b.pool.ResolveNow()
-		}
+		b.pool.ResolveNow()
 	}
 
 	return results

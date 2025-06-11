@@ -25,6 +25,16 @@ import (
 	"github.com/bufbuild/httplb/internal"
 )
 
+const (
+	// defaultNameTTL is used as the default TTL when no other default is
+	// provided to NewPollingResolver.
+	defaultTTL = 5 * time.Minute
+
+	// defaultMinRefreshInterval is used as the minimum duration between
+	// refreshes of addresses if no other value is provided to NewPollingResolver.
+	defaultMinRefreshInterval = 5 * time.Second
+)
+
 // AddressFamilyPolicy is an option that allows control over the preference
 // for which addresses to consider when resolving, based on their address
 // family.
@@ -49,7 +59,6 @@ const (
 	// addresses are present, no addresses will be resolved.
 	RequireIPv6
 
-	// PreferIPv6 will result in only IPv6 addresses being used, if any
 	// UseBothIPv4AndIPv6 will result in all addresses being used, regardless of
 	// their address family.
 	UseBothIPv4AndIPv6
@@ -86,6 +95,10 @@ type Resolver interface {
 		receiver Receiver,
 		refresh <-chan struct{},
 	) io.Closer
+	// TODO: return value should likely be interface { Close() error; RefreshNow() }
+	//       in order to better abstract the RefreshNow mechanics and not have to
+	//       rely on caller to provide channel (which could potentially be created
+	//       with unsuitable buffer size).
 }
 
 // Receiver is a client of a resolver and receives the resolved addresses.
@@ -133,36 +146,81 @@ type Address struct {
 	Attributes attribute.Values
 }
 
+// PollingResolverOption provides an optional configuration value
+// for NewPollingResolver.
+type PollingResolverOption interface {
+	apply(*pollingResolver)
+}
+
+// WithDefaultTTL provides the default TTL to use for addresses when
+// [ResolveProber.ResolveOnce] does not return one (i.e. when it returns
+// a zero duration).
+//
+// If this option is not supplied, the default TTL will be five minutes.
+func WithDefaultTTL(ttl time.Duration) PollingResolverOption {
+	return pollingResolverOption(func(r *pollingResolver) {
+		r.defaultTTL = ttl
+	})
+}
+
+// WithMinRefreshInterval provides the minimum interval between refreshes.
+// This effectively serves as an upper bound for how often the [ResolveProber]
+// can be invoked. If [ResolveProber.ResolveOnce] returns a TTL that is less
+// than this value, it will be replaced with this value.
+//
+// If the default TTL is smaller than this value, it is effectively ignored
+// and this value is used instead.
+//
+// If this option is not supplied, the minimum refresh interval is five seconds.
+func WithMinRefreshInterval(interval time.Duration) PollingResolverOption {
+	return pollingResolverOption(func(r *pollingResolver) {
+		r.minRefreshInterval = interval
+	})
+}
+
 // NewDNSResolver creates a new resolver that resolves DNS names. The specified
 // address family policy value can be used to require or prefer either IPv4 or
-// IPv6 addresses. Note that because net.Resolver does not expose the record
-// TTL values, this resolver uses the fixed TTL provided in the ttl parameter.
+// IPv6 addresses.
+//
+// Note that [net.Resolver] does not expose the record TTL values. So all records
+// are treated as having the default TTL (five minutes unless overridden via a
+// WithDefaultTTL option).
 func NewDNSResolver(
 	resolver *net.Resolver,
 	policy AddressFamilyPolicy,
-	ttl time.Duration,
+	opts ...PollingResolverOption,
 ) Resolver {
 	return NewPollingResolver(
 		&dnsResolveProber{
 			resolver: resolver,
 			policy:   policy,
 		},
-		ttl,
+		opts...,
 	)
 }
 
 // NewPollingResolver creates a new resolver that polls an underlying
-// single-shot resolver whenever the result-set TTL expires. If the underlying
-// resolver does not return a TTL with the result-set, defaultTTL is used.
+// single-shot resolver whenever the result-set TTL expires. The
+// frequency of polling is limited based on a configured minimum
+// interval between refreshes. If the underlying prober does not
+// return a TTL with the result-set, a default TTL is used.
+//
+// The minimum refresh interval and the default TTL can be controlled
+// via options and default to 5 seconds and 5 minutes respectively.
 func NewPollingResolver(
 	prober ResolveProber,
-	defaultTTL time.Duration,
+	opts ...PollingResolverOption,
 ) Resolver {
-	return &pollingResolver{
-		prober:     prober,
-		defaultTTL: defaultTTL,
-		clock:      internal.NewRealClock(),
+	result := &pollingResolver{
+		prober:             prober,
+		defaultTTL:         defaultTTL,
+		minRefreshInterval: defaultMinRefreshInterval,
+		clock:              internal.NewRealClock(),
 	}
+	for _, opt := range opts {
+		opt.apply(result)
+	}
+	return result
 }
 
 type dnsResolveProber struct {
@@ -200,9 +258,10 @@ func (r *dnsResolveProber) ResolveOnce(
 }
 
 type pollingResolver struct {
-	prober     ResolveProber
-	defaultTTL time.Duration
-	clock      internal.Clock
+	prober             ResolveProber
+	defaultTTL         time.Duration
+	minRefreshInterval time.Duration
+	clock              internal.Clock
 }
 
 func (pr *pollingResolver) New(
@@ -240,8 +299,10 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 	defer task.cancel()
 
 	timer := task.resolver.clock.NewTimer(0)
+	var lastResolve time.Time
 
 	for {
+		lastResolve = task.resolver.clock.Now()
 		addresses, ttl, err := task.resolver.prober.ResolveOnce(ctx, scheme, hostPort)
 		if err != nil {
 			receiver.OnResolveError(err)
@@ -249,10 +310,13 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 			receiver.OnResolve(addresses)
 		}
 		// TODO: exponential backoff on error
-		// TODO: should exponential backoff override ResolveNow?
+		// TODO: should exponential backoff override refresh channel?
 
 		if ttl == 0 {
 			ttl = task.resolver.defaultTTL
+		}
+		if ttl < task.resolver.minRefreshInterval {
+			ttl = task.resolver.minRefreshInterval
 		}
 		timer.Reset(ttl)
 
@@ -260,11 +324,31 @@ func (task *pollingResolverTask) run(ctx context.Context, scheme, hostPort strin
 		case <-ctx.Done():
 			return
 		case <-task.refreshCh:
+			if task.resolver.clock.Since(lastResolve) < task.resolver.minRefreshInterval {
+				// Must wait until we can re-resolve again.
+				deadline := lastResolve.Add(task.resolver.minRefreshInterval)
+				delay := task.resolver.clock.Until(deadline)
+				refreshTimer := task.resolver.clock.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					refreshTimer.Stop()
+					return
+				case <-timer.Chan():
+					refreshTimer.Stop()
+				case <-refreshTimer.Chan():
+				}
+			}
 			// Continue.
 		case <-timer.Chan():
 			// Continue.
 		}
 	}
+}
+
+type pollingResolverOption func(*pollingResolver)
+
+func (p pollingResolverOption) apply(r *pollingResolver) {
+	p(r)
 }
 
 func networkForAddressFamilyPolicy(policy AddressFamilyPolicy) string {

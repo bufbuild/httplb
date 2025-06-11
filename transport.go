@@ -185,6 +185,38 @@ func newTransport(opts *clientOptions) *mainTransport {
 	return transport
 }
 
+func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	dest := targetFromURL(request.URL)
+	for {
+		pool, err := m.getOrCreatePool(dest)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := pool.RoundTrip(request)
+		if errors.Is(err, errTryAgain) {
+			continue
+		}
+		return resp, err
+	}
+}
+
+// CloseIdleConnections is exported so that the method of the same name
+// on *[http.Client] works as expected.
+func (m *mainTransport) CloseIdleConnections() {
+	var pools []*transportPool
+	func() {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		pools = make([]*transportPool, 0, len(m.pools))
+		for _, entry := range m.pools {
+			pools = append(pools, entry.pool)
+		}
+	}()
+	for _, pool := range pools {
+		pool.CloseIdleConnections()
+	}
+}
+
 func (m *mainTransport) close() {
 	m.mu.Lock()
 	alreadyClosed := m.closed
@@ -223,38 +255,6 @@ func (m *mainTransport) closeKeepWarmPools() {
 		})
 	}
 	_ = grp.Wait()
-}
-
-func (m *mainTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	dest := targetFromURL(request.URL)
-	for {
-		pool, err := m.getOrCreatePool(dest)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := pool.RoundTrip(request)
-		if errors.Is(err, errTryAgain) {
-			continue
-		}
-		return resp, err
-	}
-}
-
-// CloseIdleConnections is exported so that the method of the same name
-// on *[http.Client] works as expected.
-func (m *mainTransport) CloseIdleConnections() {
-	var pools []*transportPool
-	func() {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
-		pools = make([]*transportPool, 0, len(m.pools))
-		for _, entry := range m.pools {
-			pools = append(pools, entry.pool)
-		}
-	}()
-	for _, pool := range pools {
-		pool.CloseIdleConnections()
-	}
 }
 
 // getOrCreatePool gets the transport pool for the given dest, creating one if

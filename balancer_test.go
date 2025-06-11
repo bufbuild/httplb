@@ -512,6 +512,7 @@ func TestBalancer_Reresolve(t *testing.T) {
 	checker := balancertesting.NewFakeHealthChecker()
 	clock := clocktest.NewFakeClock()
 	pool := balancertesting.NewFakeConnPool()
+	pool.SetClock(clock)
 
 	balancer := newBalancer(context.Background(), balancertesting.NewFakePicker, checker, pool, 0)
 	balancer.updateHook = balancertesting.DeterministicReconciler

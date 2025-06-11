@@ -24,6 +24,7 @@ type Clock interface {
 	Sleep(d time.Duration)
 	Now() time.Time
 	Since(t time.Time) time.Duration
+	Until(t time.Time) time.Duration
 	NewTicker(d time.Duration) Ticker
 	NewTimer(d time.Duration) Timer
 	AfterFunc(d time.Duration, f func()) Timer
@@ -65,6 +66,10 @@ func (realClock) Now() time.Time {
 
 func (realClock) Since(t time.Time) time.Duration {
 	return time.Since(t)
+}
+
+func (realClock) Until(t time.Time) time.Duration {
+	return time.Until(t)
 }
 
 func (realClock) NewTicker(d time.Duration) Ticker {

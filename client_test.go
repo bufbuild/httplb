@@ -310,7 +310,7 @@ func TestNewClient_CustomTransport(t *testing.T) {
 		})),
 	)
 
-	sendGetRequest(t, ctx, client, "foo://anything.com/blah", expectSuccess("foo bar"))
+	sendGetRequest(t, ctx, client, "foo://4.4.4.4/blah", expectSuccess("foo bar"))
 }
 
 func TestNewClient_CloseIdleTransports(t *testing.T) {

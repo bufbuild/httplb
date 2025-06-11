@@ -35,8 +35,7 @@ var (
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	defaultNameTTL  = 5 * time.Minute
-	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, resolver.PreferIPv4, defaultNameTTL)
+	defaultResolver = resolver.NewDNSResolver(net.DefaultResolver, resolver.PreferIPv4)
 )
 
 // Client is an HTTP client that supports configurable client-side load

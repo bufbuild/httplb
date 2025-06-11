@@ -39,12 +39,13 @@ func TestResolverTTL(t *testing.T) {
 	t.Cleanup(cancel)
 
 	testClock := clocktest.NewFakeClock()
-	resolver := NewDNSResolver(net.DefaultResolver, RequireIPv6, testTTL)
+	resolver := NewDNSResolver(net.DefaultResolver, RequireIPv6, WithDefaultTTL(testTTL))
 	resolver.(*pollingResolver).clock = testClock //nolint:errcheck
 
 	signal := make(chan struct{})
 	task := resolver.New(ctx, "http", "::1", testReceiver{
 		onResolve: func(a []Address) {
+			assert.Len(t, a, 1)
 			assert.Equal(t, "[::1]:80", a[0].HostPort)
 			signal <- struct{}{}
 		},
@@ -53,6 +54,7 @@ func TestResolverTTL(t *testing.T) {
 		},
 	}, refreshCh)
 	waitForResolve := func() {
+		t.Helper()
 		select {
 		case <-signal:
 		case <-ctx.Done():
@@ -68,24 +70,147 @@ func TestResolverTTL(t *testing.T) {
 	})
 
 	waitForResolve()
-	err := testClock.BlockUntilContext(ctx, 1)
-	require.NoError(t, err)
+	require.NoError(t, testClock.BlockUntilContext(ctx, 1))
 
 	// When advancing the clock past the TTL, we should get a new probe.
 	testClock.Advance(testTTL)
 	waitForResolve()
-	err = testClock.BlockUntilContext(ctx, 1)
-	require.NoError(t, err)
+	require.NoError(t, testClock.BlockUntilContext(ctx, 1))
 
-	// When we call ResolveNow, we should get a new probe.
+	// When we ask it to refresh...
 	select {
 	case refreshCh <- struct{}{}:
 	case <-ctx.Done():
 		t.Fatalf("cancelled before refresh channel unblocked: %v", ctx.Err())
 	}
+	// We need to wait for the minimum refresh duration to pass before it probes.
+	// We wait for a second timer to be created for the prober to wait this remaining duration.
+	require.NoError(t, testClock.BlockUntilContext(ctx, 2))
+	testClock.Advance(defaultMinRefreshInterval)
 	waitForResolve()
-	err = testClock.BlockUntilContext(ctx, 1)
-	assert.NoError(t, err)
+}
+
+func TestResolverRefresh(t *testing.T) {
+	t.Parallel()
+
+	refreshCh := make(chan struct{})
+
+	const refreshMinDuration = time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), refreshMinDuration)
+	t.Cleanup(cancel)
+
+	testClock := clocktest.NewFakeClock()
+	var resolveCount int
+	resolver := NewPollingResolver(
+		resolveProberFunc(func(_ context.Context, _, _ string) (results []Address, ttl time.Duration, err error) {
+			resolveCount++
+			return []Address{{HostPort: "1.2.3.4:443"}}, time.Minute, nil
+		}),
+		WithMinRefreshInterval(time.Second),
+	)
+	resolver.(*pollingResolver).clock = testClock //nolint:errcheck
+
+	signal := make(chan struct{}, 1)
+	task := resolver.New(ctx, "https", "foo.com", testReceiver{
+		onResolve: func(a []Address) {
+			assert.Len(t, a, 1)
+			assert.Equal(t, "1.2.3.4:443", a[0].HostPort)
+			select {
+			case signal <- struct{}{}:
+			default: // don't block if already signaled
+			}
+		},
+		onResolveError: func(err error) {
+			t.Errorf("unexpected resolution error: %v", err)
+		},
+	}, refreshCh)
+	waitForResolve := func() {
+		t.Helper()
+		select {
+		case <-signal:
+		case <-ctx.Done():
+			t.Fatal("expected call to resolver")
+		}
+	}
+	mustNotResolve := func() {
+		t.Helper()
+		// We wait a small amount of real time (not fake clock time), to make
+		// sure that concurrent goroutine has had a chance to process the resolve.
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-signal:
+			t.Fatal("expected no call to resolver")
+		default:
+		}
+	}
+	mustRefresh := func() {
+		t.Helper()
+		select {
+		case refreshCh <- struct{}{}:
+		case <-ctx.Done():
+			t.Fatal("expected refresh to be accepted")
+		}
+	}
+	mustRefreshImmediately := func() {
+		t.Helper()
+		// We wait a small amount of real time (not fake clock time), to make
+		// sure that concurrent goroutine has had a chance to enter the relevant
+		// select clause.
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case refreshCh <- struct{}{}:
+		default:
+			t.Fatal("expected refresh to be accepted immediately")
+		}
+	}
+	mustNotRefresh := func() {
+		t.Helper()
+		// We wait a small amount of real time (not fake clock time), to make
+		// sure that concurrent goroutine has had a chance to process and
+		// potentially enter the relevant select clause.
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case refreshCh <- struct{}{}:
+			t.Fatal("expected refresh to not be accepted")
+		default:
+		}
+	}
+
+	t.Cleanup(func() {
+		close(signal)
+		err := task.Close()
+		close(refreshCh)
+		require.NoError(t, err)
+	})
+
+	waitForResolve()
+	assert.Equal(t, 1, resolveCount)
+	require.NoError(t, testClock.BlockUntilContext(ctx, 1))
+
+	// As long as refreshes are not more frequent than 1 second, they work fine.
+	for i := range 5 {
+		testClock.Advance(refreshMinDuration)
+		mustRefresh()
+		waitForResolve()
+		assert.Equal(t, 2+i, resolveCount)
+	}
+
+	// We advance the clock just one nanosecond shy of next refresh time.
+	// We still can't refresh again.
+	testClock.Advance(refreshMinDuration - time.Nanosecond)
+	// The refresh is accepted...
+	mustRefresh()
+	// But the poller won't proceed until the refresh duration has fully elapsed.
+	mustNotRefresh()
+	mustNotResolve()
+
+	// But if we advance just one more nanosecond...
+	testClock.Advance(time.Nanosecond)
+	// Then we can refresh again.
+	mustRefreshImmediately()
+	waitForResolve()
+	assert.Equal(t, 7, resolveCount)
 }
 
 func TestAddressFamilyPolicy(t *testing.T) {
@@ -129,15 +254,15 @@ func TestAddressFamilyPolicy(t *testing.T) {
 		ip4Address2Resource,
 		ip6Address2Resource,
 	})
-	resolver := NewDNSResolver(mixedDNSResolver, PreferIPv4, 1)
+	resolver := NewDNSResolver(mixedDNSResolver, PreferIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv4, 1)
+	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, PreferIPv6, 1)
+	resolver = NewDNSResolver(mixedDNSResolver, PreferIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv6, 1)
+	resolver = NewDNSResolver(mixedDNSResolver, RequireIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(mixedDNSResolver, UseBothIPv4AndIPv6, 1)
+	resolver = NewDNSResolver(mixedDNSResolver, UseBothIPv4AndIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2, ip6Address1, ip6Address2})
 
 	// A records only
@@ -145,15 +270,15 @@ func TestAddressFamilyPolicy(t *testing.T) {
 		ip4Address1Resource,
 		ip4Address2Resource,
 	})
-	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv4, 1)
+	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv4, 1)
+	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv6, 1)
+	resolver = NewDNSResolver(ip4DNSResolver, PreferIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
-	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv6, 1)
+	resolver = NewDNSResolver(ip4DNSResolver, RequireIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{})
-	resolver = NewDNSResolver(ip4DNSResolver, UseBothIPv4AndIPv6, 1)
+	resolver = NewDNSResolver(ip4DNSResolver, UseBothIPv4AndIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip4Address1, ip4Address2})
 
 	// AAAA records only
@@ -161,22 +286,22 @@ func TestAddressFamilyPolicy(t *testing.T) {
 		ip6Address1Resource,
 		ip6Address2Resource,
 	})
-	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv4, 1)
+	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv4, 1)
+	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv4)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{})
-	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv6, 1)
+	resolver = NewDNSResolver(ip6DNSResolver, PreferIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv6, 1)
+	resolver = NewDNSResolver(ip6DNSResolver, RequireIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
-	resolver = NewDNSResolver(ip6DNSResolver, UseBothIPv4AndIPv6, 1)
+	resolver = NewDNSResolver(ip6DNSResolver, UseBothIPv4AndIPv6)
 	testResolveAddresses(t, resolver, "example.com", []net.IP{ip6Address1, ip6Address2})
 
 	// IPv4 embedded in IPv6
 	// This is needed because Go will do this for all IPv4 addresses that
 	// are passed into the resolver. Even if Go's behavior changes, we
 	// should behave consistently in the face of this quirk.
-	resolver = NewDNSResolver(net.DefaultResolver, RequireIPv4, 1)
+	resolver = NewDNSResolver(net.DefaultResolver, RequireIPv4)
 	loopback := net.ParseIP("127.0.0.1")
 	testResolveAddresses(t, resolver, "127.0.0.1", []net.IP{loopback})
 	testResolveAddresses(t, resolver, "::ffff:127.0.0.1", []net.IP{loopback})
@@ -321,4 +446,10 @@ func newFakeDNSResolver(t *testing.T, answers []dnsmessage.Resource) *net.Resolv
 		PreferGo: true,
 		Dial:     dialer.Dial,
 	}
+}
+
+type resolveProberFunc func(ctx context.Context, scheme, hostPort string) (results []Address, ttl time.Duration, err error)
+
+func (fn resolveProberFunc) ResolveOnce(ctx context.Context, scheme, hostPort string) (results []Address, ttl time.Duration, err error) {
+	return fn(ctx, scheme, hostPort)
 }
