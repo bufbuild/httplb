@@ -25,10 +25,12 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bufbuild/httplb/attribute"
 	"github.com/bufbuild/httplb/conn"
 	"github.com/bufbuild/httplb/health"
+	"github.com/bufbuild/httplb/internal"
 	"github.com/bufbuild/httplb/internal/conns"
 	"github.com/bufbuild/httplb/picker"
 	"github.com/bufbuild/httplb/resolver"
@@ -100,6 +102,8 @@ type FakeConnPool struct {
 	connsUpdate  chan struct{}
 	resolveNowCh chan struct{}
 
+	clock internal.Clock
+
 	mu sync.Mutex
 	// +checklocks:mu
 	index int
@@ -109,11 +113,14 @@ type FakeConnPool struct {
 	picker PickerState
 	// +checklocks:mu
 	resolveNowCount int
+	// +checklocks:mu
+	lastResolveNow time.Time
 }
 
 // NewFakeConnPool constructs a new FakeConnPool.
 func NewFakeConnPool() *FakeConnPool {
 	return &FakeConnPool{
+		clock:        internal.NewRealClock(),
 		pickerUpdate: make(chan struct{}, 1),
 		connsUpdate:  make(chan struct{}, 1),
 		resolveNowCh: make(chan struct{}, 1),
@@ -161,7 +168,7 @@ func (p *FakeConnPool) RemoveConn(toRemove conn.Conn) bool {
 	return true
 }
 
-// GetConns implements the balancer.ConnPool interface. It returns a
+// Conns implements the balancer.ConnPool interface. It returns a
 // snapshot of the pool's set of active connections.
 func (p *FakeConnPool) Conns() conn.Conns {
 	p.mu.Lock()
@@ -190,7 +197,13 @@ func (p *FakeConnPool) UpdatePicker(picker picker.Picker, isWarm bool) {
 // counter that can be introspected.
 func (p *FakeConnPool) ResolveNow() {
 	p.mu.Lock()
+	// De-bounce ResolveNow calls the same way a polling resolver does by default.
+	if !p.lastResolveNow.IsZero() && p.clock.Since(p.lastResolveNow) < 5*time.Second {
+		p.mu.Unlock()
+		return
+	}
 	p.resolveNowCount++
+	p.lastResolveNow = p.clock.Now()
 	p.mu.Unlock()
 
 	select {
@@ -260,6 +273,12 @@ func (p *FakeConnPool) AwaitResolveNow(ctx context.Context) (int, error) {
 		p.mu.Unlock()
 		return count, nil
 	}
+}
+
+// SetClock sets the clock that the pool uses. It must be called right after
+// construction and never called again once the pool is in use.
+func (p *FakeConnPool) SetClock(clock internal.Clock) {
+	p.clock = clock
 }
 
 // PickerState represents the attributes of a picker. It encapsulates the
