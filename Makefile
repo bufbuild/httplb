@@ -45,7 +45,7 @@ generate: $(BIN)/license-header ## Regenerate code and licenses
 .PHONY: lint
 lint: $(BIN)/golangci-lint $(BIN)/checklocks ## Lint
 	go vet ./...
-	#go vet -vettool=$(BIN)/checklocks ./...
+	go vet -vettool=$(BIN)/checklocks ./...
 	golangci-lint run
 
 .PHONY: lintfix
@@ -75,4 +75,4 @@ $(BIN)/golangci-lint: Makefile
 
 $(BIN)/checklocks: Makefile
 	@mkdir -p $(@D)
-	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20250313000854-906fb319cc3a
+	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20260108061738-2f5377660b6f
