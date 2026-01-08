@@ -75,4 +75,4 @@ $(BIN)/golangci-lint: Makefile
 
 $(BIN)/checklocks: Makefile
 	@mkdir -p $(@D)
-	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20260108080055-5aa19429c3bd
+	go install gvisor.dev/gvisor/tools/checklocks/cmd/checklocks@v0.0.0-20260108061738-2f5377660b6f
