@@ -667,7 +667,15 @@ func (t *transportPool) getConnection(request *http.Request) (conn.Conn, func(),
 	pickerPtr := t.picker.Load()
 
 	if pickerPtr == nil {
-		<-t.pickerInitialized
+		var doneCh <-chan struct{}
+		if request != nil {
+			doneCh = request.Context().Done()
+		}
+		select {
+		case <-t.pickerInitialized:
+		case <-doneCh:
+			return nil, nil, fmt.Errorf("picker not initialized: %w", request.Context().Err())
+		}
 		pickerPtr = t.picker.Load()
 	}
 
